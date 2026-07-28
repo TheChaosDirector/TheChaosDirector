@@ -1,8 +1,7 @@
 """Historical replay: grade a frozen champion over the full data lake.
 
-This answers "if this exact brain had been running for the whole history,
-what would the account look like?" — always side by side with the boring
-alternative of buying and holding the benchmark.
+Supports portfolio mode (multi-name, close-to-close) and daytrade mode
+(must-pick one name, open→close).
 """
 
 from __future__ import annotations
@@ -11,10 +10,9 @@ import json
 import logging
 from pathlib import Path
 
-import pandas as pd
-
 from src.config import Config
 from src.data.lake import Lake
+from src.env.daytrade_env import DaytradeEnv
 from src.env.portfolio_env import PortfolioEnv
 from src.features.factory import build_features, warmup_days
 from src.metrics.scorecard import plain_english, scorecard
@@ -41,48 +39,83 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
         )
 
     start = warmup_days(cfg.features)
-    end = len(close) - 1
-    env = PortfolioEnv(
-        close=close,
-        panel=panel,
-        costs=cfg.costs,
-        risk=cfg.risk,
-        start=start,
-        end=end,
-        cost_multiplier=cost_multiplier,
-    )
-    journal = rollout(model, env)
-    weights = env.weight_history()
 
-    bench_ret = close[lake.benchmark].iloc[start : end + 1].pct_change().dropna()
+    if cfg.mode == "daytrade":
+        open_ = lake.open.reindex_like(close)
+        end = len(close)
+        env = DaytradeEnv(
+            open_=open_,
+            close=close,
+            panel=panel,
+            costs=cfg.costs,
+            risk=cfg.risk,
+            daytrade=cfg.daytrade,
+            start=start,
+            end=end,
+            cost_multiplier=cost_multiplier,
+        )
+        journal = rollout(model, env)
+        weights = None
+        # Same-day open→close benchmark proxy: SPY's own open→close each day.
+        bench_ret = (close[lake.benchmark] / open_[lake.benchmark] - 1.0).iloc[start:end]
+        bench_ret = bench_ret.dropna()
+    else:
+        end = len(close) - 1
+        env = PortfolioEnv(
+            close=close,
+            panel=panel,
+            costs=cfg.costs,
+            risk=cfg.risk,
+            start=start,
+            end=end,
+            cost_multiplier=cost_multiplier,
+        )
+        journal = rollout(model, env)
+        weights = env.weight_history()
+        bench_ret = close[lake.benchmark].iloc[start : end + 1].pct_change().dropna()
 
-    agent_card = scorecard(journal["net_return"], journal["turnover"])
+    turnover = journal["turnover"] if "turnover" in journal.columns else None
+    agent_card = scorecard(journal["net_return"], turnover)
     bench_card = scorecard(bench_ret)
 
     out = backtest_dir(cfg) / tag
     out.mkdir(parents=True, exist_ok=True)
     journal.to_csv(out / "journal.csv")
-    weights.to_csv(out / "weights.csv")
+    if weights is not None:
+        weights.to_csv(out / "weights.csv")
     bench_equity = (1.0 + bench_ret).cumprod()
     bench_equity.to_csv(out / "benchmark_equity.csv")
 
     summary = {
         "tag": tag,
+        "mode": cfg.mode,
         "cost_multiplier": cost_multiplier,
         "champion_fold": meta["fold"],
-        "period": [str(close.index[start].date()), str(close.index[end].date())],
+        "period": [
+            str(close.index[start].date()),
+            str(close.index[min(end, len(close)) - 1].date()),
+        ],
         "agent": agent_card,
         "benchmark": bench_card,
         "agent_says": plain_english(agent_card, "the agent"),
-        "benchmark_says": plain_english(bench_card, f"buy-and-hold {lake.benchmark}"),
+        "benchmark_says": plain_english(
+            bench_card,
+            f"{'SPY open→close' if cfg.mode == 'daytrade' else 'buy-and-hold ' + lake.benchmark}",
+        ),
     }
+    if cfg.mode == "daytrade" and "forced" in journal.columns:
+        summary["forced_rate"] = float(journal["forced"].mean())
+        summary["forced_says"] = (
+            f"On {summary['forced_rate'] * 100:.0f}% of days the agent marked its pick as "
+            f"'hand was forced' (wanted to sit out, but the rules require a trade)."
+        )
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     log.info(
-        "Backtest [%s]: agent %.1f%% (Sharpe %.2f) vs %s %.1f%% (Sharpe %.2f)",
+        "Backtest [%s/%s]: agent %.1f%% (Sharpe %.2f) vs bench %.1f%% (Sharpe %.2f)",
+        cfg.mode,
         tag,
         agent_card["total_return"] * 100,
         agent_card["sharpe"],
-        lake.benchmark,
         bench_card["total_return"] * 100,
         bench_card["sharpe"],
     )

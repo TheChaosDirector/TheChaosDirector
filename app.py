@@ -51,7 +51,8 @@ def pct(x: float) -> str:
 st.sidebar.title("Mission Control")
 config_files = sorted(str(p) for p in Path("configs").glob("*.yaml"))
 config_path = st.sidebar.selectbox("Config", config_files, index=0)
-cfg = load_config(config_path)
+mode = st.sidebar.selectbox("Mode", ["portfolio", "daytrade"], index=0)
+cfg = load_config(config_path, mode=mode)
 art = cfg.artifacts_dir
 
 manifest = load_json(cfg.lake_dir / "manifest.json")
@@ -63,12 +64,15 @@ if manifest:
 else:
     st.sidebar.warning("No data lake yet. Run: python -m src.cli download")
 
+st.sidebar.caption(f"Artifacts: `{art}`")
 st.sidebar.markdown(
     "This lab trades **simulated money only**. If the Referee tab shows a "
-    "failure, no profit number on any other tab should be trusted."
+    "failure, no profit number on any other tab should be trusted.\n\n"
+    "**portfolio** = multi-name brain. **daytrade** = must pick one name, "
+    "buy open / sell close (may log 'hand was forced')."
 )
 
-st.title("Autonomous Trading Agent Lab")
+st.title(f"Autonomous Trading Agent Lab — {mode}")
 
 tab_train, tab_backtest, tab_paper, tab_referee = st.tabs(
     ["Self-Training", "Backtest", "Paper Desk", "Referee"]
@@ -149,6 +153,12 @@ with tab_backtest:
 
         st.markdown(f"**In plain English:** {summary['agent_says']}")
         st.markdown(f"**The boring alternative:** {summary['benchmark_says']}")
+        if summary.get("forced_says"):
+            st.markdown(f"**Forced trades:** {summary['forced_says']}")
+        if mode == "daytrade" and "ticker" in journal.columns:
+            st.subheader("Day-trade tape (last 30 days of backtest)")
+            cols = [c for c in ["ticker", "open", "close", "net_return", "reluctance", "forced", "equity"] if c in journal.columns]
+            st.dataframe(journal[cols].tail(30), width="stretch")
         st.caption(
             "Careful: the backtest period overlaps data some folds trained on, so it "
             "flatters the agent. The exam grades (Self-Training tab) and the paper "
@@ -185,13 +195,17 @@ with tab_paper:
         if pjournal is not None and len(pjournal):
             eq = pjournal.set_index("date")["equity"]
             st.plotly_chart(equity_chart({"Paper account ($)": eq}, "Paper account value"), width="stretch")
+            if mode == "daytrade" and "forced" in pjournal.columns:
+                st.metric("Forced-trade rate", f"{pjournal['forced'].astype(float).mean() * 100:.0f}% of days")
             st.dataframe(pjournal.tail(15), width="stretch", hide_index=True)
 
-        if state.get("weights"):
+        if mode == "portfolio" and state.get("weights"):
             pos = pd.Series(state["weights"]).sort_values(ascending=False)
             fig = go.Figure(go.Bar(x=pos.index, y=pos.values * 100))
             fig.update_layout(title="Current positions (% of account)", yaxis_title="%", height=320)
             st.plotly_chart(fig, width="stretch")
+        elif mode == "daytrade" and state.get("last_ticker"):
+            st.info(f"Last day-trade pick: **{state['last_ticker']}** (always 100% of the account for that day).")
 
 # ------------------------------------------------------------------ referee
 with tab_referee:

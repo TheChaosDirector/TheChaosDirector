@@ -227,6 +227,57 @@ def check_reality_gate(cfg: Config) -> dict:
     }
 
 
+# ---------------------------------------------------------------- daytrade-only
+def check_must_pick_one(cfg: Config) -> dict:
+    """Daytrade rule: every graded day must name exactly one ticker."""
+    if cfg.mode != "daytrade":
+        return {
+            "name": "must_pick_one",
+            "passed": True,
+            "details": {"skipped": True, "reason": "portfolio mode"},
+            "plain_english": "Skipped — this check only applies to day-trade mode.",
+        }
+
+    path = cfg.artifacts_dir / "backtest" / "base" / "journal.csv"
+    if not path.exists():
+        return {
+            "name": "must_pick_one",
+            "passed": False,
+            "details": {"error": "no daytrade backtest journal — run backtest first"},
+            "plain_english": "No day-trade journal found, so we can't prove it always picked one name.",
+        }
+
+    journal = pd.read_csv(path)
+    if "ticker" not in journal.columns:
+        return {
+            "name": "must_pick_one",
+            "passed": False,
+            "details": {"error": "journal missing ticker column"},
+            "plain_english": "Day-trade journal is missing the ticker column — the must-pick rule can't be verified.",
+        }
+
+    blank = journal["ticker"].isna() | (journal["ticker"].astype(str).str.strip() == "")
+    multi = journal["ticker"].astype(str).str.contains(r"[,;]", regex=True)
+    n_bad = int(blank.sum() + multi.sum())
+    passed = n_bad == 0
+    forced_rate = float(journal["forced"].astype(float).mean()) if "forced" in journal.columns else None
+    return {
+        "name": "must_pick_one",
+        "passed": bool(passed),
+        "details": {
+            "days": int(len(journal)),
+            "bad_days": n_bad,
+            "forced_rate": forced_rate,
+        },
+        "plain_english": (
+            f"Every one of {len(journal)} day-trade days has exactly one ticker"
+            + (f" (forced on {forced_rate * 100:.0f}% of days)." if forced_rate is not None else ".")
+            if passed
+            else f"{n_bad} days broke the must-pick-one rule."
+        ),
+    }
+
+
 # ---------------------------------------------------------------- runner
 def run_referee(cfg: Config) -> dict:
     lake = Lake(cfg)
@@ -236,9 +287,11 @@ def run_referee(cfg: Config) -> dict:
         check_embargo(cfg),
         check_cost_stress(cfg),
         check_reality_gate(cfg),
+        check_must_pick_one(cfg),
     ]
     overall = all(c["passed"] for c in checks)
     report = {
+        "mode": cfg.mode,
         "overall_pass": overall,
         "verdict": (
             "PASS — no cheating detected and the results hold up under stress. "

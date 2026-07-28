@@ -1,9 +1,11 @@
 # Default configuration: the "full" research run.
 # Everything here is in plain units; comments explain what each knob means.
 
+mode: portfolio                  # portfolio | daytrade (CLI --mode overrides)
+
 paths:
   lake_dir: data/lake            # where downloaded price files live
-  artifacts_dir: artifacts       # where models, backtests, reports live
+  artifacts_dir: artifacts       # models land under artifacts/<mode>/
 
 universe:
   name: default                  # which built-in ticker list to use (default | smoke)
@@ -41,6 +43,10 @@ training:
   seed: 42
   n_env_steps: 2048              # PPO rollout length
   learning_rate: 0.0003
+  n_workers: 4                   # parallel walk-forward folds
+
+daytrade:
+  forced_threshold: 0.5          # reluctance >= this ⇒ log "hand was forced"
 
 paper:
   starting_cash: 100000          # fake money for the paper desk

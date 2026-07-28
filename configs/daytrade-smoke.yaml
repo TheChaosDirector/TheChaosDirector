@@ -1,9 +1,6 @@
-# Smoke configuration: a small, fast end-to-end run to prove the plumbing works.
-# Same shape as default.yaml, just smaller numbers everywhere.
+# Fast day-trade smoke run (same lake as configs/smoke.yaml).
+mode: daytrade
 
-mode: portfolio
-
-# Isolated from the default run so the two never overwrite each other.
 paths:
   lake_dir: data/lake-smoke
   artifacts_dir: artifacts/smoke

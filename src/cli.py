@@ -2,10 +2,10 @@
 
 Usage:
     python -m src.cli download [--config configs/smoke.yaml] [--synthetic]
-    python -m src.cli train    [--config ...]
-    python -m src.cli backtest [--config ...]
-    python -m src.cli paper    [--config ...] [--days 5]
-    python -m src.cli referee  [--config ...]
+    python -m src.cli train    [--config ...] [--mode portfolio|daytrade]
+    python -m src.cli backtest [--config ...] [--mode ...]
+    python -m src.cli paper    [--config ...] [--mode ...] [--days 5]
+    python -m src.cli referee  [--config ...] [--mode ...]
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import argparse
 import json
 import logging
 
-from src.config import load_config
+from src.config import VALID_MODES, load_config
 
 
 def main() -> None:
@@ -23,15 +23,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="src.cli", description="Autonomous Trading Agent Lab")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def add(name: str, help_: str) -> argparse.ArgumentParser:
+    def add(name: str, help_: str, with_mode: bool = True) -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=help_)
         p.add_argument("--config", default="configs/default.yaml", help="YAML config to use")
+        if with_mode:
+            p.add_argument(
+                "--mode",
+                choices=VALID_MODES,
+                default=None,
+                help="portfolio (multi-name) or daytrade (must-pick open→close). Overrides YAML.",
+            )
         return p
 
-    p_dl = add("download", "Fill the data lake with daily prices")
+    p_dl = add("download", "Fill the data lake with daily prices", with_mode=False)
     p_dl.add_argument("--synthetic", action="store_true", help="Build a fake market (offline mode)")
 
-    add("train", "Walk-forward self-training; saves the champion brain")
+    add("train", "Walk-forward self-training (parallel folds when n_workers > 1)")
     add("backtest", "Grade the champion over the full history")
 
     p_paper = add("paper", "Advance the simulated live paper-trading desk")
@@ -40,7 +47,8 @@ def main() -> None:
     add("referee", "Run the anti-cheat report")
 
     args = parser.parse_args()
-    cfg = load_config(args.config)
+    mode = getattr(args, "mode", None)
+    cfg = load_config(args.config, mode=mode)
 
     if args.command == "download":
         from src.data.download import run_download
@@ -59,6 +67,8 @@ def main() -> None:
         print(json.dumps(summary, indent=2))
         print("\n" + summary["agent_says"])
         print(summary["benchmark_says"])
+        if "forced_says" in summary:
+            print(summary["forced_says"])
     elif args.command == "paper":
         from src.paper.desk import advance
 

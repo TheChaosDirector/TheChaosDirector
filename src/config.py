@@ -65,6 +65,13 @@ class TrainingCfg:
     seed: int = 42
     n_env_steps: int = 2048
     learning_rate: float = 3e-4
+    n_workers: int = 1  # parallel walk-forward folds (1 = serial)
+
+
+@dataclass
+class DaytradeCfg:
+    # Reluctance above this = "hand was forced" (trade still happens).
+    forced_threshold: float = 0.5
 
 
 @dataclass
@@ -78,8 +85,12 @@ class RefereeCfg:
     cheat_corr_threshold: float = 0.30
 
 
+VALID_MODES = ("portfolio", "daytrade")
+
+
 @dataclass
 class Config:
+    mode: str = "portfolio"
     paths: PathsCfg = field(default_factory=PathsCfg)
     universe: UniverseCfg = field(default_factory=UniverseCfg)
     data: DataCfg = field(default_factory=DataCfg)
@@ -87,9 +98,14 @@ class Config:
     costs: CostsCfg = field(default_factory=CostsCfg)
     risk: RiskCfg = field(default_factory=RiskCfg)
     training: TrainingCfg = field(default_factory=TrainingCfg)
+    daytrade: DaytradeCfg = field(default_factory=DaytradeCfg)
     paper: PaperCfg = field(default_factory=PaperCfg)
     referee: RefereeCfg = field(default_factory=RefereeCfg)
     config_path: str = ""
+
+    def __post_init__(self) -> None:
+        if self.mode not in VALID_MODES:
+            raise ValueError(f"Unknown mode '{self.mode}' (expected {VALID_MODES})")
 
     @property
     def lake_dir(self) -> Path:
@@ -97,7 +113,8 @@ class Config:
 
     @property
     def artifacts_dir(self) -> Path:
-        return Path(self.paths.artifacts_dir)
+        # Mode-scoped so portfolio and daytrade champions never overwrite each other.
+        return Path(self.paths.artifacts_dir) / self.mode
 
 
 _SECTIONS = {
@@ -108,15 +125,17 @@ _SECTIONS = {
     "costs": CostsCfg,
     "risk": RiskCfg,
     "training": TrainingCfg,
+    "daytrade": DaytradeCfg,
     "paper": PaperCfg,
     "referee": RefereeCfg,
 }
 
 
-def load_config(path: str | Path) -> Config:
+def load_config(path: str | Path, mode: str | None = None) -> Config:
     raw = yaml.safe_load(Path(path).read_text()) or {}
     kwargs = {}
     for section, cls in _SECTIONS.items():
         kwargs[section] = cls(**(raw.get(section) or {}))
-    cfg = Config(**kwargs, config_path=str(path))
+    resolved_mode = mode or raw.get("mode") or "portfolio"
+    cfg = Config(**kwargs, mode=resolved_mode, config_path=str(path))
     return cfg
