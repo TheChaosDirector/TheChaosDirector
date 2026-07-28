@@ -1,0 +1,50 @@
+# Default configuration: the "full" research run.
+# Everything here is in plain units; comments explain what each knob means.
+
+paths:
+  lake_dir: data/lake            # where downloaded price files live
+  artifacts_dir: artifacts       # where models, backtests, reports live
+
+universe:
+  name: default                  # which built-in ticker list to use (default | smoke)
+  benchmark: SPY                 # the "just buy the market" comparison
+  min_history_days: 756          # a ticker needs ~3 years of data to be included
+  max_tickers: 500               # hard cap after liquidity filtering
+
+data:
+  start: "2010-01-01"            # how far back to download
+  end: null                      # null = up to today
+  min_dollar_volume: 5000000     # liquidity filter: median daily $ traded
+
+features:
+  momentum_windows: [5, 21, 63, 126]   # "how has it moved" lookbacks (days)
+  vol_window: 21                       # volatility lookback
+  volume_window: 21                    # volume-shock lookback
+  ma_windows: [10, 50, 200]            # moving-average distance lookbacks
+  regime_ma: 200                       # market regime = benchmark above/below this MA
+
+costs:
+  commission_bps: 1.0            # broker fee, in basis points of traded value
+  slippage_bps: 5.0              # price impact assumption per trade
+  stress_multiplier: 3.0         # referee re-runs with costs multiplied by this
+
+risk:
+  max_weight_per_name: 0.10      # never put more than 10% in one stock
+  max_gross_exposure: 1.0        # long-only, fully-invested cap (1.0 = 100%)
+  drawdown_penalty: 0.10         # how hard training punishes new drawdown depth
+
+training:
+  train_years: 3.0               # each fold trains on this many years
+  test_months: 6                 # ...then is graded on the next N months
+  embargo_days: 5                # purge gap between train and test (anti-leak)
+  total_timesteps: 150000        # PPO training budget per fold
+  seed: 42
+  n_env_steps: 2048              # PPO rollout length
+  learning_rate: 0.0003
+
+paper:
+  starting_cash: 100000          # fake money for the paper desk
+
+referee:
+  leakage_sample_dates: 20       # random dates to re-verify features on
+  cheat_corr_threshold: 0.30     # |corr(feature, same-bar future return)| above this = suspicious
