@@ -1,9 +1,10 @@
 # Smoke configuration: a small, fast end-to-end run to prove the plumbing works.
 # Same shape as default.yaml, just smaller numbers everywhere.
 
+# Isolated from the default run so the two never overwrite each other.
 paths:
-  lake_dir: data/lake
-  artifacts_dir: artifacts
+  lake_dir: data/lake-smoke
+  artifacts_dir: artifacts/smoke
 
 universe:
   name: smoke
