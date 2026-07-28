@@ -169,7 +169,27 @@ def check_cost_stress(cfg: Config) -> dict:
 
     base_ret = base["agent"]["total_return"]
     stress_ret = stressed["agent"]["total_return"]
-    passed = stress_ret > 0 or (base_ret <= 0)
+    # If the base run is already unprofitable, cost stress can't "kill an edge"
+    # that wasn't there — mark informational pass, but say so clearly.
+    already_losing = base_ret <= 0
+    passed = stress_ret > 0 or already_losing
+    if already_losing:
+        plain = (
+            f"Base backtest was already unprofitable ({base_ret * 100:.1f}%). "
+            f"At {cfg.costs.stress_multiplier:g}x costs it is {stress_ret * 100:.1f}%. "
+            "No edge to protect — treat this check as informational."
+        )
+    elif passed:
+        plain = (
+            f"With trading costs multiplied by {cfg.costs.stress_multiplier:g}, total return goes "
+            f"from {base_ret * 100:.1f}% to {stress_ret * 100:.1f}%. The edge survives rough conditions."
+        )
+    else:
+        plain = (
+            f"With trading costs multiplied by {cfg.costs.stress_multiplier:g}, total return goes "
+            f"from {base_ret * 100:.1f}% to {stress_ret * 100:.1f}%. "
+            "The 'profit' disappears once trading isn't nearly free — the edge is likely costs-fragile."
+        )
     return {
         "name": "cost_stress",
         "passed": bool(passed),
@@ -177,13 +197,9 @@ def check_cost_stress(cfg: Config) -> dict:
             "cost_multiplier": cfg.costs.stress_multiplier,
             "base_total_return": round(base_ret, 4),
             "stressed_total_return": round(stress_ret, 4),
+            "already_losing": already_losing,
         },
-        "plain_english": (
-            f"With trading costs multiplied by {cfg.costs.stress_multiplier:g}, total return goes "
-            f"from {base_ret * 100:.1f}% to {stress_ret * 100:.1f}%. "
-            + ("The edge survives rough conditions." if passed
-               else "The 'profit' disappears once trading isn't nearly free — the edge is likely costs-fragile.")
-        ),
+        "plain_english": plain,
     }
 
 

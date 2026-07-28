@@ -198,6 +198,20 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
 
 def _worker(payload: dict) -> dict:
     """Process entrypoint: reload config and train one fold."""
+    import os
+
+    # Keep each parallel worker on one BLAS/torch thread so N workers don't
+    # thrash each other into a slower-than-serial mess.
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    try:
+        import torch
+
+        torch.set_num_threads(1)
+    except Exception:
+        pass
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = load_config(payload["config_path"], mode=payload["mode"])
     fold = Fold(**payload["fold"])
@@ -214,6 +228,16 @@ def _worker(payload: dict) -> dict:
 
 
 def run_training(cfg: Config) -> dict:
+    # Parent process: also stay polite if serial, and set a default before spawn.
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    try:
+        import torch
+
+        torch.set_num_threads(1)
+    except Exception:
+        pass
+
     lake = Lake(cfg)
     close = lake.close
     panel = build_features(close, lake.volume, cfg.features, lake.benchmark)
@@ -258,7 +282,14 @@ def run_training(cfg: Config) -> dict:
         with ProcessPoolExecutor(max_workers=n_workers) as pool:
             futures = {pool.submit(_worker, p): p["fold"]["index"] for p in payloads}
             for fut in as_completed(futures):
-                records.append(fut.result())
+                metrics = fut.result()
+                records.append(metrics)
+                log.info(
+                    "Fold %d finished (worker) in %.0fs — exam Sharpe %.2f",
+                    metrics["fold"],
+                    metrics["train_seconds"],
+                    metrics["out_of_sample"]["sharpe"],
+                )
         records.sort(key=lambda r: r["fold"])
 
     save_experiments(cfg, records)
