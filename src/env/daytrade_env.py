@@ -69,6 +69,8 @@ class DaytradeEnv(gym.Env):
         end: int,
         cost_multiplier: float = 1.0,
         benchmark: str | None = None,
+        randomize_episodes: bool = False,
+        min_episode_days: int = 63,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -86,6 +88,8 @@ class DaytradeEnv(gym.Env):
         self.start = start
         self.end = end
         self.cost_rate = costs.total_bps / 1e4 * cost_multiplier
+        self.randomize_episodes = randomize_episodes
+        self.min_episode_days = min(min_episode_days, max(5, end - start))
 
         self.n_assets = len(panel.tickers)
         self.benchmark = benchmark or panel.tickers[0]
@@ -95,13 +99,21 @@ class DaytradeEnv(gym.Env):
 
         obs_dim = self.n_assets * panel.n_features + 2
         self.observation_space = spaces.Box(-np.inf, np.inf, (obs_dim,), np.float32)
-        # [which ticker, forced_flag] — forced never skips the trade.
         self.action_space = spaces.MultiDiscrete([self.n_assets, 2])
+        self.np_random = np.random.default_rng(0)
 
         self._reset_state()
 
     def _reset_state(self) -> None:
-        self.t = self.start
+        span = self.end - self.start
+        if self.randomize_episodes and span > self.min_episode_days:
+            ep_len = int(self.np_random.integers(self.min_episode_days, span + 1))
+            max_start = self.end - ep_len
+            self.t = int(self.np_random.integers(self.start, max_start + 1))
+            self.episode_end = self.t + ep_len
+        else:
+            self.t = self.start
+            self.episode_end = self.end
         self.equity = 1.0
         self.peak = 1.0
         self.drawdown = 0.0
@@ -119,6 +131,8 @@ class DaytradeEnv(gym.Env):
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
+        if seed is not None:
+            self.np_random = np.random.default_rng(seed)
         self._reset_state()
         return self._obs(), {}
 
@@ -148,8 +162,6 @@ class DaytradeEnv(gym.Env):
         dd_increment = max(0.0, new_dd - self.drawdown)
         self.drawdown = new_dd
 
-        # Teach stock-picking: beat same-day benchmark open→close after costs,
-        # while still caring about absolute P&L and drawdowns.
         excess = net_ret - bench_net
         reward = (
             float(excess)
@@ -176,7 +188,7 @@ class DaytradeEnv(gym.Env):
         )
 
         self.t += 1
-        terminated = self.t >= self.end
+        terminated = self.t >= self.episode_end
         if terminated:
             next_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
         else:

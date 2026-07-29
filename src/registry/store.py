@@ -39,10 +39,16 @@ def load_champion_meta(cfg: Config) -> dict:
 
 
 def load_champion_model(cfg: Config):
+    meta = load_champion_meta(cfg)
+    path = meta["model_path"]
+    if meta.get("learner") == "supervised" or str(path).endswith(".joblib"):
+        from src.train.daytrade_supervised import DaytradeRankerAdapter
+
+        return DaytradeRankerAdapter.load(path), meta
+
     from stable_baselines3 import PPO
 
-    meta = load_champion_meta(cfg)
-    return PPO.load(meta["model_path"]), meta
+    return PPO.load(path), meta
 
 
 def save_experiments(cfg: Config, records: list[dict]) -> None:

@@ -108,7 +108,16 @@ def _make_portfolio_env(close, panel, cfg: Config, start: int, end: int, cost_mu
     )
 
 
-def _make_daytrade_env(open_, close, panel, cfg: Config, start: int, end: int, cost_multiplier: float = 1.0):
+def _make_daytrade_env(
+    open_,
+    close,
+    panel,
+    cfg: Config,
+    start: int,
+    end: int,
+    cost_multiplier: float = 1.0,
+    randomize_episodes: bool = False,
+):
     return DaytradeEnv(
         open_=open_,
         close=close,
@@ -120,6 +129,7 @@ def _make_daytrade_env(open_, close, panel, cfg: Config, start: int, end: int, c
         end=end,
         cost_multiplier=cost_multiplier,
         benchmark=cfg.universe.benchmark,
+        randomize_episodes=randomize_episodes,
     )
 
 
@@ -166,10 +176,14 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
             close, volume, open_, lake.benchmark, cfg.daytrade.max_names
         )
         panel = build_features(close, volume, cfg.features, lake.benchmark)
-        train_env = Monitor(_make_daytrade_env(open_, close, panel, cfg, fold.train_start, fold.train_end))
+        train_env = Monitor(
+            _make_daytrade_env(
+                open_, close, panel, cfg, fold.train_start, fold.train_end, randomize_episodes=True
+            )
+        )
         is_env = _make_daytrade_env(open_, close, panel, cfg, fold.train_start, fold.train_end)
         oos_env = _make_daytrade_env(open_, close, panel, cfg, fold.test_start, fold.test_end)
-        policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
+        policy_kwargs = dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
     else:
         panel = build_features(close, volume, cfg.features, lake.benchmark)
         train_env = Monitor(_make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end))
@@ -184,6 +198,7 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         learning_rate=cfg.training.learning_rate,
         n_steps=max(64, cfg.training.n_env_steps),
         batch_size=min(64, max(32, cfg.training.n_env_steps // 4)),
+        ent_coef=0.02 if cfg.mode == "daytrade" else 0.0,
         seed=cfg.training.seed + fold.index,
         policy_kwargs=policy_kwargs,
         verbose=0,

@@ -71,10 +71,13 @@ class TrainingCfg:
 @dataclass
 class DaytradeCfg:
     # Reluctance / forced threshold kept for backwards-compatible YAML;
-    # forced is now an explicit discrete action bit.
+    # forced is now an explicit discrete action bit (PPO) or derived (supervised).
     forced_threshold: float = 0.5
     # Cap how many names the daytrader sees (benchmark always kept). None = all.
     max_names: int | None = None
+    # "supervised" = walk-forward gradient-boosted ranker (less overfit-prone)
+    # "ppo" = reinforcement learning with randomized train episodes
+    learner: str = "supervised"
 
 
 @dataclass

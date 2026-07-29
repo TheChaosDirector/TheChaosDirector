@@ -45,6 +45,7 @@ training:
 
 daytrade:
   forced_threshold: 0.5
+  learner: supervised
 
 paper:
   starting_cash: 100000

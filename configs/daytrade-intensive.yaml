@@ -25,7 +25,7 @@ features:
 
 costs:
   commission_bps: 1.0
-  slippage_bps: 5.0
+  slippage_bps: 2.0
   stress_multiplier: 3.0
 
 risk:
@@ -45,6 +45,7 @@ training:
 
 daytrade:
   forced_threshold: 0.5
+  learner: supervised
   max_names: 40
 
 paper:

@@ -56,10 +56,15 @@ def main() -> None:
         manifest = run_download(cfg, synthetic=args.synthetic)
         print(json.dumps(manifest, indent=2))
     elif args.command == "train":
-        from src.train.walkforward import run_training
+        if cfg.mode == "daytrade" and cfg.daytrade.learner == "supervised":
+            from src.train.daytrade_supervised import run_supervised_training
 
-        champion = run_training(cfg)
-        print(json.dumps(champion["metrics"], indent=2, default=str))
+            champion = run_supervised_training(cfg)
+        else:
+            from src.train.walkforward import run_training
+
+            champion = run_training(cfg)
+        print(json.dumps(champion.get("metrics", champion), indent=2, default=str))
     elif args.command == "backtest":
         from src.backtest.engine import run_backtest
 
