@@ -28,13 +28,32 @@ def test_topk_weights_respect_max_names_and_caps():
         assert int((w > 1e-12).sum()) <= 4
 
 
+def test_min_gross_blocks_all_cash():
+    n = 8
+    # Huge cash logit — without min_gross this is ~100% cash.
+    action = np.full(n + 1, -5.0)
+    action[-1] = 10.0
+    valid = np.ones(n)
+    w0 = action_to_weights(action, valid, max_weight=0.35, max_gross=1.0, max_names=4)
+    assert w0.sum() < 0.2
+    w = action_to_weights(
+        action, valid, max_weight=0.35, max_gross=1.0, max_names=4, min_gross=0.80
+    )
+    assert w.sum() >= 0.80 - 1e-9
+    assert int((w > 1e-12).sum()) <= 4
+    assert (w <= 0.35 + 1e-12).all()
+
+
 def test_concentrated_config_loads():
     cfg = load_config("configs/concentrated-smoke.yaml", mode="concentrated")
     assert is_concentrated(cfg)
     assert is_allocation(cfg)
     assert not is_daytrade(cfg)
     assert cfg.concentrated.max_names == 4
+    assert cfg.concentrated.min_gross_exposure == 0.80
+    assert cfg.concentrated.excess_reward_weight == 1.5
     assert cfg.risk.max_weight_per_name == 0.35
+    assert cfg.risk.drawdown_penalty == 0.08
     assert cfg.artifacts_dir.as_posix().endswith("concentrated")
 
 
@@ -54,12 +73,13 @@ def test_excess_reward_journal(fake_market, cfg):
         end=len(close) - 1,
         benchmark_returns=br,
         max_names=3,
-        excess_reward_weight=1.0,
-        absolute_reward_weight=0.25,
+        min_gross=0.80,
+        excess_reward_weight=1.5,
+        absolute_reward_weight=0.05,
     )
     obs, _ = env.reset()
     action = np.zeros(env.action_space.shape, dtype=np.float32)
-    action[-1] = 5.0  # prefer cash
+    action[-1] = 5.0  # prefer cash — min_gross should still force investment
     done = False
     while not done:
         obs, reward, done, _, _ = env.step(action)
@@ -67,7 +87,8 @@ def test_excess_reward_journal(fake_market, cfg):
     journal = env.results()
     assert "excess_return" in journal.columns
     assert "benchmark_return" in journal.columns
-    # Cash-ish book: net ~0, excess ~ -bench
+    assert "gross_exposure" in journal.columns
+    assert float(journal["gross_exposure"].min()) >= 0.80 - 1e-6
     assert abs(journal["benchmark_return"].iloc[0] - 0.001) < 1e-12
 
 

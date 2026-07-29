@@ -32,7 +32,7 @@ costs:
 risk:
   max_weight_per_name: 0.35
   max_gross_exposure: 1.0
-  drawdown_penalty: 0.25
+  drawdown_penalty: 0.08
 
 training:
   train_years: 2.0
@@ -46,8 +46,9 @@ training:
 
 concentrated:
   max_names: 4
-  excess_reward_weight: 1.0
-  absolute_reward_weight: 0.25
+  min_gross_exposure: 0.80
+  excess_reward_weight: 1.5
+  absolute_reward_weight: 0.05
 
 paper:
   starting_cash: 100000

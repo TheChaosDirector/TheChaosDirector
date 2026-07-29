@@ -84,9 +84,11 @@ class DaytradeCfg:
 class ConcentratedCfg:
     # Keep at most this many names after softmax (rest forced to cash).
     max_names: int = 6
-    # Reward mix: lean on beating the benchmark, keep a little absolute-return signal.
-    excess_reward_weight: float = 1.0
-    absolute_reward_weight: float = 0.25
+    # Must stay at least this invested (1 - cash). Stops the "hide in cash" cheat.
+    min_gross_exposure: float = 0.80
+    # Reward mix: lean hard on beating the benchmark; tiny absolute-return signal.
+    excess_reward_weight: float = 1.5
+    absolute_reward_weight: float = 0.05
 
 
 @dataclass

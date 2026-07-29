@@ -114,12 +114,14 @@ def _advance_portfolio(cfg: Config, lake: Lake, model, meta: dict, state: dict, 
         today_close = lake.close.loc[today, tickers].values
         valid = np.isfinite(today_close).astype(np.float64)
         max_names = cfg.concentrated.max_names if is_concentrated(cfg) else None
+        min_gross = cfg.concentrated.min_gross_exposure if is_concentrated(cfg) else None
         target = action_to_weights(
             action,
             valid,
             cfg.risk.max_weight_per_name,
             cfg.risk.max_gross_exposure,
             max_names=max_names,
+            min_gross=min_gross,
         )
         turnover = float(np.abs(target - prev_weights).sum())
         cost_frac = turnover * cfg.costs.total_bps / 1e4

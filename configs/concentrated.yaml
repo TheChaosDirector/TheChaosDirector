@@ -1,5 +1,5 @@
 # Concentrated mode — aggressive, fewer/fatter bets (full research run).
-# Separate champion/artifacts from portfolio and daytrade.
+# Anti-timid: min invested, softer DD penalty, excess-vs-SPY-heavy reward.
 
 mode: concentrated
 
@@ -33,7 +33,7 @@ costs:
 risk:
   max_weight_per_name: 0.35      # fat bets allowed
   max_gross_exposure: 1.0
-  drawdown_penalty: 0.25         # stronger brake than portfolio
+  drawdown_penalty: 0.08         # softer than v1 (was 0.25) — stop cash-hugging
 
 training:
   train_years: 3.0
@@ -47,8 +47,9 @@ training:
 
 concentrated:
   max_names: 6                   # keep at most this many holdings
-  excess_reward_weight: 1.0      # lean on beating SPY
-  absolute_reward_weight: 0.25
+  min_gross_exposure: 0.80       # must stay ≥80% invested (cash capped at 20%)
+  excess_reward_weight: 1.5      # lean hard on beating SPY
+  absolute_reward_weight: 0.05   # tiny "just survive" term
 
 paper:
   starting_cash: 100000

@@ -131,6 +131,7 @@ def _make_portfolio_env(
         kwargs.update(
             benchmark_returns=close_to_close_benchmark_returns(close, bench_name),
             max_names=cfg.concentrated.max_names,
+            min_gross=cfg.concentrated.min_gross_exposure,
             excess_reward_weight=cfg.concentrated.excess_reward_weight,
             absolute_reward_weight=cfg.concentrated.absolute_reward_weight,
         )
@@ -420,26 +421,43 @@ def run_training(cfg: Config) -> dict:
             len(records),
         )
     elif is_concentrated(cfg):
-        # Prefer folds that beat SPY on mean daily excess; else best Sharpe.
-        positive = [r for r in records if float(r.get("oos_excess_mean") or 0.0) > 0]
+        # Prefer folds that beat SPY on excess AND finished green in absolute terms.
+        positive = [
+            r
+            for r in records
+            if float(r.get("oos_excess_mean") or 0.0) > 0
+            and r["out_of_sample"]["total_return"] > 0
+        ]
         if positive:
             best = max(
                 positive,
                 key=lambda r: (
                     float(r.get("oos_excess_mean") or 0.0),
+                    r["out_of_sample"]["total_return"],
                     r["out_of_sample"]["sharpe"],
                 ),
             )
-            selected_by = "best_positive_oos_excess"
+            selected_by = "best_positive_oos_excess_and_return"
         else:
+            # Fall back: positive excess only, then best Sharpe.
+            excess_pos = [r for r in records if float(r.get("oos_excess_mean") or 0.0) > 0]
+            pool = excess_pos or records
             best = max(
-                records,
-                key=lambda r: (r["out_of_sample"]["sharpe"], r["out_of_sample"]["total_return"]),
+                pool,
+                key=lambda r: (
+                    float(r.get("oos_excess_mean") or -1e9),
+                    r["out_of_sample"]["sharpe"],
+                    r["out_of_sample"]["total_return"],
+                ),
             )
-            selected_by = "best_oos_sharpe_no_positive_excess_folds"
+            selected_by = (
+                "best_positive_oos_excess"
+                if excess_pos
+                else "best_oos_sharpe_no_positive_excess_folds"
+            )
         n_pos = len(positive)
         log.info(
-            "Concentrated consistency: %d/%d exam folds had positive mean excess vs SPY",
+            "Concentrated consistency: %d/%d exam folds had positive excess AND positive return",
             n_pos,
             len(records),
         )
@@ -465,6 +483,7 @@ def run_training(cfg: Config) -> dict:
     }
     if is_concentrated(cfg):
         champion["max_names"] = cfg.concentrated.max_names
+        champion["min_gross_exposure"] = cfg.concentrated.min_gross_exposure
     save_champion(cfg, champion)
     log.info(
         "Champion = fold %d (selected_by=%s, exam Sharpe %.2f)",

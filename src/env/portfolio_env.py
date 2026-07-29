@@ -11,7 +11,8 @@ Rules of the game, in plain English:
 - Default score (reward) is the day's log profit, minus a penalty whenever the
   portfolio digs itself into a *new* deepest drawdown — so the agent learns
   that steady gains beat wild swings.
-- Concentrated mode can also score excess vs a benchmark and keep only top-k names.
+- Concentrated mode can also score excess vs a benchmark, keep only top-k names,
+  and force a minimum invested fraction so it cannot hide in cash.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ def action_to_weights(
     max_weight: float,
     max_gross: float,
     max_names: int | None = None,
+    min_gross: float | None = None,
 ) -> np.ndarray:
     """Map raw agent output (logits over names + cash) to legal weights.
 
@@ -40,27 +42,91 @@ def action_to_weights(
 
     If ``max_names`` is set, only the top-k weights (among valid names) are kept;
     the rest are zeroed and caps are re-applied.
+
+    If ``min_gross`` is set, scale (or force-pick) so invested weight is at least
+    that fraction — cash cannot eat the book.
     """
     logits = np.clip(np.asarray(action, dtype=np.float64), -10.0, 10.0)
     exp = np.exp(logits - logits.max())
     budget = exp / exp.sum()
 
     weights = budget[:-1] * valid_mask  # last slot is cash
+    name_logits = logits[:-1]
+
     if max_names is not None and max_names > 0 and len(weights) > max_names:
         # Rank only among currently valid names so dead tickers don't steal slots.
         scores = np.where(valid_mask > 0, weights, -np.inf)
+        # If cash ate almost everything, fall back to raw name logits for ranking.
+        if not np.isfinite(scores).any() or float(np.nanmax(scores)) <= 1e-12:
+            scores = np.where(valid_mask > 0, name_logits, -np.inf)
         keep_idx = np.argpartition(scores, -max_names)[-max_names:]
         mask = np.zeros_like(weights)
-        # Drop -inf slots if fewer than max_names are valid.
         keep_idx = keep_idx[np.isfinite(scores[keep_idx])]
         mask[keep_idx] = 1.0
         weights = weights * mask
 
     weights = np.minimum(weights, max_weight)
-    gross = weights.sum()
+    gross = float(weights.sum())
     if gross > max_gross and gross > 0:
         weights *= max_gross / gross
+        gross = float(weights.sum())
+
+    if min_gross is not None and min_gross > 0:
+        target = min(float(min_gross), float(max_gross))
+        weights = _enforce_min_gross(weights, valid_mask, name_logits, max_weight, target, max_names)
+
     return weights
+
+
+def _enforce_min_gross(
+    weights: np.ndarray,
+    valid_mask: np.ndarray,
+    name_logits: np.ndarray,
+    max_weight: float,
+    min_gross: float,
+    max_names: int | None,
+) -> np.ndarray:
+    """Push invested weight up to min_gross among a concentrated sleeve."""
+    w = weights.astype(np.float64).copy()
+    gross = float(w.sum())
+    if gross + 1e-12 >= min_gross:
+        return w
+
+    # If basically all cash, force-pick top names by logits and seed equal weights.
+    if gross <= 1e-12:
+        k = max_names if max_names and max_names > 0 else int(valid_mask.sum())
+        k = max(1, min(k, int(valid_mask.sum()) or 1))
+        scores = np.where(valid_mask > 0, name_logits, -np.inf)
+        if not np.isfinite(scores).any():
+            return w
+        keep_idx = np.argpartition(scores, -k)[-k:]
+        keep_idx = keep_idx[np.isfinite(scores[keep_idx])]
+        if len(keep_idx) == 0:
+            return w
+        seed = min(min_gross / len(keep_idx), max_weight)
+        w[:] = 0.0
+        w[keep_idx] = seed
+        gross = float(w.sum())
+
+    if gross + 1e-12 >= min_gross:
+        return np.minimum(w, max_weight)
+
+    # Scale up held names, then iteratively clip at max_weight and refill room.
+    held = w > 1e-12
+    if not held.any():
+        return w
+    w[held] *= min_gross / gross
+    for _ in range(8):
+        w = np.minimum(w, max_weight)
+        shortfall = min_gross - float(w.sum())
+        if shortfall <= 1e-12:
+            break
+        room = np.where(held & (valid_mask > 0), max_weight - w, 0.0)
+        room_sum = float(room.sum())
+        if room_sum <= 1e-12:
+            break
+        w += room * (shortfall / room_sum)
+    return np.minimum(w, max_weight)
 
 
 class PortfolioEnv(gym.Env):
@@ -80,6 +146,7 @@ class PortfolioEnv(gym.Env):
         *,
         benchmark_returns: np.ndarray | None = None,
         max_names: int | None = None,
+        min_gross: float | None = None,
         excess_reward_weight: float = 0.0,
         absolute_reward_weight: float = 1.0,
     ):
@@ -96,6 +163,7 @@ class PortfolioEnv(gym.Env):
         self.end = end
         self.cost_rate = costs.total_bps / 1e4 * cost_multiplier
         self.max_names = max_names
+        self.min_gross = min_gross
         self.excess_reward_weight = float(excess_reward_weight)
         self.absolute_reward_weight = float(absolute_reward_weight)
 
@@ -156,6 +224,7 @@ class PortfolioEnv(gym.Env):
             self.risk.max_weight_per_name,
             self.risk.max_gross_exposure,
             max_names=self.max_names,
+            min_gross=self.min_gross,
         )
 
         turnover = float(np.abs(target - self.weights).sum())
@@ -203,6 +272,7 @@ class PortfolioEnv(gym.Env):
             "cost": cost,
             "turnover": turnover,
             "equity": self.equity,
+            "gross_exposure": float(target.sum()),
             "weights": target.copy(),
         }
         if self.benchmark_returns is not None:
