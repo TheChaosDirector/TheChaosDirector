@@ -143,6 +143,10 @@ def main() -> None:
             from src.train.daytrade_supervised import run_supervised_training
 
             champion = run_supervised_training(cfg)
+        elif cfg.mode == "concentrated" and cfg.concentrated.learner == "supervised":
+            from src.train.concentrated_supervised import run_supervised_training
+
+            champion = run_supervised_training(cfg)
         else:
             from src.train.walkforward import run_training
 

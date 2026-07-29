@@ -48,8 +48,13 @@ training:
 concentrated:
   max_names: 6                   # keep at most this many holdings
   min_gross_exposure: 0.80       # must stay ≥80% invested (cash capped at 20%)
-  excess_reward_weight: 1.5      # lean hard on beating SPY
-  absolute_reward_weight: 0.05   # tiny "just survive" term
+  excess_reward_weight: 1.5      # PPO path: lean hard on beating SPY
+  absolute_reward_weight: 0.05   # PPO path: tiny "just survive" term
+  learner: supervised            # supervised rank-then-size (or ppo)
+  train_cost_multiplier: 3.0     # grade/train under harsh costs
+  turnover_penalty: 0.35         # PPO-only churn tax
+  baseline_mix: 0.45             # blend momentum prior into ranks
+  momentum_window: 63            # dumb-but-strong baseline lookback
 
 paper:
   starting_cash: 100000

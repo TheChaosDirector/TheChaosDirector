@@ -52,6 +52,8 @@ def test_concentrated_config_loads():
     assert cfg.concentrated.max_names == 4
     assert cfg.concentrated.min_gross_exposure == 0.80
     assert cfg.concentrated.excess_reward_weight == 1.5
+    assert cfg.concentrated.learner == "supervised"
+    assert cfg.concentrated.train_cost_multiplier == 3.0
     assert cfg.risk.max_weight_per_name == 0.35
     assert cfg.risk.drawdown_penalty == 0.08
     assert cfg.artifacts_dir.as_posix().endswith("concentrated")

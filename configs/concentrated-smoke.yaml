@@ -49,6 +49,11 @@ concentrated:
   min_gross_exposure: 0.80
   excess_reward_weight: 1.5
   absolute_reward_weight: 0.05
+  learner: supervised
+  train_cost_multiplier: 3.0
+  turnover_penalty: 0.35
+  baseline_mix: 0.45
+  momentum_window: 63
 
 paper:
   starting_cash: 100000

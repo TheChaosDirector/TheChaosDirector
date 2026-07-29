@@ -13,7 +13,7 @@ intentionally not wired up here.
 |---|---|
 | **portfolio** | Splits the account across many stocks/ETFs (and cash). Free to spray thin or concentrate within risk caps. |
 | **daytrade** | **Must pick exactly one** name. Buys at the **open**, sells at the **close**. Cannot sit in cash. May log **"hand was forced"** ("I wanted to hold, but the rules made me go in") — that signal never cancels the trade. |
-| **concentrated** | Daily allocation like portfolio, but **few fat bets** (top-k names, higher per-name caps, **≥80% invested**) aiming to **beat SPY**. Separate champion/artifacts. Alpaca not wired until it passes the referee. |
+| **concentrated** | Daily allocation like portfolio, but **few fat bets** (rank-then-size + momentum baseline, **≥80% invested**) aiming to **beat SPY**. Trains under harsher costs; can ensemble green folds. Alpaca not wired until it passes the referee. |
 
 Artifacts for each mode live under `artifacts/<mode>/` (or `artifacts/smoke/<mode>/` for smoke configs) so they never overwrite each other.
 

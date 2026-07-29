@@ -149,6 +149,7 @@ class PortfolioEnv(gym.Env):
         min_gross: float | None = None,
         excess_reward_weight: float = 0.0,
         absolute_reward_weight: float = 1.0,
+        turnover_penalty: float = 0.0,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -166,6 +167,7 @@ class PortfolioEnv(gym.Env):
         self.min_gross = min_gross
         self.excess_reward_weight = float(excess_reward_weight)
         self.absolute_reward_weight = float(absolute_reward_weight)
+        self.turnover_penalty = float(turnover_penalty)
 
         # Per-bar close-to-close benchmark return aligned to env step index t
         # (reward at t uses return from t → t+1). Length must cover [start, end).
@@ -260,6 +262,8 @@ class PortfolioEnv(gym.Env):
                 + self.absolute_reward_weight * abs_term
                 - self.risk.drawdown_penalty * dd_increment
             )
+        if self.turnover_penalty > 0:
+            reward -= self.turnover_penalty * turnover
 
         # Positions drift with prices until the next rebalance.
         growth = 1.0 + net_ret

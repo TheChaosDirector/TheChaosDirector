@@ -82,13 +82,23 @@ class DaytradeCfg:
 
 @dataclass
 class ConcentratedCfg:
-    # Keep at most this many names after softmax (rest forced to cash).
+    # Keep at most this many names after softmax (rest forced toward cash, then min_gross).
     max_names: int = 6
     # Must stay at least this invested (1 - cash). Stops the "hide in cash" cheat.
     min_gross_exposure: float = 0.80
-    # Reward mix: lean hard on beating the benchmark; tiny absolute-return signal.
+    # Reward mix for PPO path: lean hard on beating the benchmark.
     excess_reward_weight: float = 1.5
     absolute_reward_weight: float = 0.05
+    # Default learner: supervised rank-then-size (ppo kept as opt-in).
+    learner: str = "supervised"  # supervised | ppo
+    # Grade/train under harsher costs so churn stops looking free (exam still honest).
+    train_cost_multiplier: float = 3.0
+    # PPO-only: extra penalty on daily turnover.
+    turnover_penalty: float = 0.35
+    # Momentum baseline blend into rank scores (0=pure model, 1=pure momentum).
+    baseline_mix: float = 0.45
+    # Which lagged momentum feature to use as the dumb-but-strong prior.
+    momentum_window: int = 63
 
 
 @dataclass

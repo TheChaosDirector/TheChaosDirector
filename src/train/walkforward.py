@@ -41,6 +41,19 @@ TRADING_DAYS_PER_YEAR = 252
 TRADING_DAYS_PER_MONTH = 21
 
 
+class AllocationPPOEnsemble:
+    """Average action logits from several PPO champions (green-fold ensemble)."""
+
+    def __init__(self, models: list):
+        if not models:
+            raise ValueError("ensemble needs models")
+        self.models = models
+
+    def predict(self, obs, deterministic: bool = True):
+        acts = [m.predict(obs, deterministic=deterministic)[0] for m in self.models]
+        return np.mean(np.stack(acts, axis=0), axis=0).astype(np.float32), None
+
+
 @dataclass
 class Fold:
     index: int
@@ -134,6 +147,7 @@ def _make_portfolio_env(
             min_gross=cfg.concentrated.min_gross_exposure,
             excess_reward_weight=cfg.concentrated.excess_reward_weight,
             absolute_reward_weight=cfg.concentrated.absolute_reward_weight,
+            turnover_penalty=cfg.concentrated.turnover_penalty,
         )
     return PortfolioEnv(**kwargs)
 
@@ -218,16 +232,38 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         policy_kwargs = dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
     else:
         panel = build_features(close, volume, cfg.features, lake.benchmark)
+        train_mult = (
+            float(cfg.concentrated.train_cost_multiplier) if is_concentrated(cfg) else 1.0
+        )
+        grade_mult = train_mult if is_concentrated(cfg) else 1.0
         train_env = Monitor(
             _make_portfolio_env(
-                close, panel, cfg, fold.train_start, fold.train_end, benchmark=lake.benchmark
+                close,
+                panel,
+                cfg,
+                fold.train_start,
+                fold.train_end,
+                cost_multiplier=train_mult,
+                benchmark=lake.benchmark,
             )
         )
         is_env = _make_portfolio_env(
-            close, panel, cfg, fold.train_start, fold.train_end, benchmark=lake.benchmark
+            close,
+            panel,
+            cfg,
+            fold.train_start,
+            fold.train_end,
+            cost_multiplier=grade_mult,
+            benchmark=lake.benchmark,
         )
         oos_env = _make_portfolio_env(
-            close, panel, cfg, fold.test_start, fold.test_end, benchmark=lake.benchmark
+            close,
+            panel,
+            cfg,
+            fold.test_start,
+            fold.test_end,
+            cost_multiplier=grade_mult,
+            benchmark=lake.benchmark,
         )
         policy_kwargs = dict(net_arch=[64, 64])
         open_ = None
@@ -427,6 +463,7 @@ def run_training(cfg: Config) -> dict:
             for r in records
             if float(r.get("oos_excess_mean") or 0.0) > 0
             and r["out_of_sample"]["total_return"] > 0
+            and r["out_of_sample"]["sharpe"] > 0
         ]
         if positive:
             best = max(
@@ -469,21 +506,56 @@ def run_training(cfg: Config) -> dict:
         selected_by = "out_of_sample.sharpe"
         n_pos = None
 
+    model_path = str(fold_dir(cfg, best["fold"]) / "model.zip")
+    learner = "ppo"
+    ensemble_folds = None
+    if is_concentrated(cfg) and n_pos and n_pos >= 2:
+        # Green-fold PPO ensemble: average actions from exam winners.
+        import json
+        import shutil
+
+        from src.registry.store import registry_dir
+
+        ens_dir = registry_dir(cfg) / "ppo_ensemble"
+        if ens_dir.exists():
+            shutil.rmtree(ens_dir)
+        ens_dir.mkdir(parents=True, exist_ok=True)
+        green = [
+            r
+            for r in records
+            if float(r.get("oos_excess_mean") or 0.0) > 0
+            and r["out_of_sample"]["total_return"] > 0
+            and r["out_of_sample"]["sharpe"] > 0
+        ]
+        for r in green:
+            src = fold_dir(cfg, r["fold"]) / "model.zip"
+            shutil.copy(src, ens_dir / f"fold_{r['fold']:02d}.zip")
+        members_path = ens_dir / "members.json"
+        members_path.write_text(json.dumps([r["fold"] for r in green]))
+        model_path = str(members_path)
+        selected_by = f"ensemble_of_{len(green)}_green_folds"
+        learner = "concentrated_ppo_ensemble"
+        ensemble_folds = [r["fold"] for r in green]
+
     champion = {
         "fold": best["fold"],
         "mode": cfg.mode,
-        "model_path": str(fold_dir(cfg, best["fold"]) / "model.zip"),
+        "learner": learner,
+        "model_path": model_path,
         "tickers": panel.tickers,
         "feature_names": panel.names,
         "selected_by": selected_by,
         "positive_oos_folds": n_pos,
         "total_folds": len(records),
+        "ensemble_folds": ensemble_folds,
         "metrics": best,
         "config_path": cfg.config_path,
     }
     if is_concentrated(cfg):
         champion["max_names"] = cfg.concentrated.max_names
         champion["min_gross_exposure"] = cfg.concentrated.min_gross_exposure
+        champion["train_cost_multiplier"] = cfg.concentrated.train_cost_multiplier
+        champion["turnover_penalty"] = cfg.concentrated.turnover_penalty
     save_champion(cfg, champion)
     log.info(
         "Champion = fold %d (selected_by=%s, exam Sharpe %.2f)",
