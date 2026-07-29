@@ -89,17 +89,13 @@ chmod +x scripts/pack-champion.sh
 
 ### C) Cursor Automation
 
-In [Cursor Automations](https://cursor.com/automations), create a weekday schedule, attach this repo, and use a prompt like:
+In [Cursor Automations](https://cursor.com/automations), create a weekday schedule, attach this repo, and paste the ready-made prompt from:
 
-1. Download the `portfolio-champion` release + install deps  
-2. Run: `python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute --skip-if-closed`  
-3. Run: `python -m src.cli decisions-label --config configs/default.yaml --mode portfolio`  
-4. **Commit and push** any new files under `experience/portfolio/` (the choice diary) so they aren’t lost when the cloud VM disappears  
-5. Summarize what traded — do not open a PR unless something failed and needs a code fix  
+[`prompts/cursor-alpaca-daily.md`](prompts/cursor-alpaca-daily.md)
 
-Put paper API keys in Cloud Agent **Runtime Secrets**.
+Schedule cron suggestion: `30 14 * * 1-5`. Put paper API keys in Cloud Agent **Runtime Secrets**.
 
-Plans/executions also land in `artifacts/portfolio/alpaca_paper/` (local/ephemeral). The durable training diary is `experience/portfolio/decisions.jsonl`.
+That prompt: downloads the champion, paper-rebalances, grades the choice diary, then **commits/pushes** `experience/portfolio/` so the history survives.
 
 ## Choice diary → future training data
 
