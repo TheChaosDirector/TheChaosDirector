@@ -7,12 +7,13 @@ account every trading day.
 **Practice money by default. No promises of profit.** Live/real-money trading is
 intentionally not wired up here.
 
-## Two modes
+## Three modes
 
 | Mode | What it does each day |
 |---|---|
 | **portfolio** | Splits the account across many stocks/ETFs (and cash). Free to spray thin or concentrate within risk caps. |
 | **daytrade** | **Must pick exactly one** name. Buys at the **open**, sells at the **close**. Cannot sit in cash. May log **"hand was forced"** ("I wanted to hold, but the rules made me go in") — that signal never cancels the trade. |
+| **concentrated** | Daily allocation like portfolio, but **few fat bets** (rank-then-size + momentum baseline, **≥80% invested**) aiming to **beat SPY**. Trains under harsher costs; can ensemble green folds. Alpaca not wired until it passes the referee. |
 
 Artifacts for each mode live under `artifacts/<mode>/` (or `artifacts/smoke/<mode>/` for smoke configs) so they never overwrite each other.
 
@@ -137,13 +138,25 @@ python -m src.cli paper    --config configs/daytrade-smoke.yaml --days 10
 python -m src.cli referee  --config configs/daytrade-smoke.yaml
 ```
 
-Or override mode on any config: `--mode daytrade`.
+## Quickstart — concentrated smoke
+
+```bash
+# reuses the same lake from the portfolio smoke download
+python -m src.cli train    --config configs/concentrated-smoke.yaml --mode concentrated
+python -m src.cli backtest --config configs/concentrated-smoke.yaml --mode concentrated
+python -m src.cli paper    --config configs/concentrated-smoke.yaml --mode concentrated --days 10
+python -m src.cli referee  --config configs/concentrated-smoke.yaml --mode concentrated
+```
+
+Full concentrated research run: `configs/concentrated.yaml`.
+
+Or override mode on any config: `--mode daytrade` / `--mode concentrated`.
 
 ```bash
 streamlit run app.py   # pick config + mode in the sidebar
 ```
 
-Full-size run: `configs/default.yaml` (hundreds of tickers; expect longer training even with parallel folds).
+Full-size portfolio run: `configs/default.yaml` (hundreds of tickers; expect longer training even with parallel folds).
 
 Offline: add `--synthetic` to `download` for a fake but realistic market.
 

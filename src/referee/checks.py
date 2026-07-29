@@ -29,6 +29,7 @@ import pandas as pd
 from src.config import Config
 from src.data.lake import Lake
 from src.features.factory import FeaturePanel, build_daytrade_features, build_features, warmup_days
+from src.modes import is_concentrated, is_daytrade
 from src.registry.store import load_experiments
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ def referee_dir(cfg: Config) -> Path:
 def check_lookahead_recompute(cfg: Config, lake: Lake, n_dates: int | None = None) -> dict:
     """Rebuild features from future-deleted data and demand identical values."""
     close, volume = lake.close, lake.volume
-    if cfg.mode == "daytrade":
+    if is_daytrade(cfg):
         open_ = lake.open.reindex_like(close)
         full = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
     else:
@@ -58,7 +59,7 @@ def check_lookahead_recompute(cfg: Config, lake: Lake, n_dates: int | None = Non
     for idx in sorted(sample):
         when = close.index[idx]
         view = lake.as_of(when)
-        if cfg.mode == "daytrade":
+        if is_daytrade(cfg):
             truncated = build_daytrade_features(
                 view.close, view.volume, view.open, cfg.features, lake.benchmark
             )
@@ -114,7 +115,7 @@ def feature_future_correlations(close: pd.DataFrame, panel: FeaturePanel) -> dic
 
 
 def check_future_correlation(cfg: Config, lake: Lake) -> dict:
-    if cfg.mode == "daytrade":
+    if is_daytrade(cfg):
         panel = build_daytrade_features(
             lake.close, lake.volume, lake.open.reindex_like(lake.close), cfg.features, lake.benchmark
         )
@@ -228,7 +229,7 @@ def check_reality_gate(cfg: Config) -> dict:
             "plain_english": "No exam results logged yet.",
         }
 
-    if cfg.mode == "daytrade":
+    if is_daytrade(cfg):
         # Daytrade goal (per you): consistently *positive* on never-seen exams,
         # without cheating — not "beat SPY every single window."
         rows = []
@@ -271,6 +272,51 @@ def check_reality_gate(cfg: Config) -> dict:
             ),
         }
 
+    if is_concentrated(cfg):
+        # Concentrated goal: beat SPY on excess often enough, not just look flashy once.
+        rows = []
+        positive_excess = 0
+        excesses = []
+        for r in records:
+            ex = r.get("oos_excess_mean")
+            if ex is None:
+                ex = float(r["out_of_sample"]["total_return"] - r["benchmark_oos"]["total_return"])
+            ex = float(ex)
+            excesses.append(ex)
+            won = ex > 0
+            positive_excess += int(won)
+            rows.append(
+                {
+                    "fold": r["fold"],
+                    "oos_excess_mean": round(ex, 6),
+                    "oos_sharpe": round(r["out_of_sample"]["sharpe"], 2),
+                    "positive_excess": won,
+                }
+            )
+        frac = positive_excess / len(records)
+        mean_ex = float(np.mean(excesses))
+        passed = frac >= 0.4 and mean_ex > 0
+        return {
+            "name": "reality_gate",
+            "passed": bool(passed),
+            "details": {
+                "folds": rows,
+                "positive_excess_fraction": round(frac, 2),
+                "mean_oos_excess": round(mean_ex, 6),
+                "rule": ">=40% exam folds with positive mean excess vs SPY and overall mean excess > 0",
+            },
+            "plain_english": (
+                f"On exam data, the concentrated book beat SPY on average in "
+                f"{positive_excess} of {len(records)} periods "
+                f"(mean daily excess {mean_ex * 100:.3f}%). "
+                + (
+                    "Ambitious style is earning its keep on unseen windows — still simulated."
+                    if passed
+                    else "Not consistently beating the index across exam windows yet."
+                )
+            ),
+        }
+
     rows = []
     wins = 0
     for r in records:
@@ -307,11 +353,11 @@ def check_reality_gate(cfg: Config) -> dict:
 # ---------------------------------------------------------------- daytrade-only
 def check_must_pick_one(cfg: Config) -> dict:
     """Daytrade rule: every graded day must name exactly one ticker."""
-    if cfg.mode != "daytrade":
+    if not is_daytrade(cfg):
         return {
             "name": "must_pick_one",
             "passed": True,
-            "details": {"skipped": True, "reason": "portfolio mode"},
+            "details": {"skipped": True, "reason": f"{cfg.mode} mode"},
             "plain_english": "Skipped — this check only applies to day-trade mode.",
         }
 
