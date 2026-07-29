@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +22,9 @@ log = logging.getLogger(__name__)
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 LIVE_BASE_URL = "https://api.alpaca.markets"
+# Paper accounts get rate-limited when a fresh portfolio fires hundreds of orders.
+_MAX_RETRIES = 6
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 
 @dataclass
@@ -56,26 +60,47 @@ class AlpacaPaperClient:
             }
         )
 
-    def _get(self, path: str, params: dict | None = None) -> Any:
+    def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
         url = f"{self.base_url}{path}"
         if LIVE_BASE_URL in url:
             raise RuntimeError("Refusing to call live Alpaca endpoints from paper client")
-        r = self.session.get(url, params=params, timeout=30)
+        last: requests.Response | None = None
+        for attempt in range(_MAX_RETRIES):
+            last = self.session.request(method, url, timeout=30, **kwargs)
+            if last.status_code not in _RETRY_STATUSES:
+                return last
+            # Honor Retry-After when present; otherwise exponential backoff.
+            retry_after = last.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else min(2 ** attempt, 30)
+            except ValueError:
+                delay = min(2 ** attempt, 30)
+            log.warning(
+                "Alpaca %s %s → %s; retry %d/%d in %.1fs",
+                method,
+                path,
+                last.status_code,
+                attempt + 1,
+                _MAX_RETRIES,
+                delay,
+            )
+            time.sleep(delay)
+        assert last is not None
+        return last
+
+    def _get(self, path: str, params: dict | None = None) -> Any:
+        r = self._request("GET", path, params=params)
         r.raise_for_status()
         return r.json()
 
     def _post(self, path: str, body: dict) -> Any:
-        url = f"{self.base_url}{path}"
-        if LIVE_BASE_URL in url:
-            raise RuntimeError("Refusing to call live Alpaca endpoints from paper client")
-        r = self.session.post(url, json=body, timeout=30)
+        r = self._request("POST", path, json=body)
         if r.status_code >= 400:
             raise RuntimeError(f"Alpaca error {r.status_code}: {r.text}")
         return r.json()
 
     def _delete(self, path: str) -> Any:
-        url = f"{self.base_url}{path}"
-        r = self.session.delete(url, timeout=30)
+        r = self._request("DELETE", path)
         if r.status_code >= 400 and r.status_code != 404:
             raise RuntimeError(f"Alpaca error {r.status_code}: {r.text}")
         return r.json() if r.content else {}

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -280,8 +281,11 @@ def rebalance(
     client.cancel_open_orders()
     submitted = []
     errors = []
-    for order in orders:
+    for i, order in enumerate(orders):
         try:
+            # Small pacing so a 200+ name first fill does not slam paper rate limits.
+            if i and i % 20 == 0:
+                time.sleep(1.0)
             resp = client.submit_notional_market_order(
                 order["symbol"], order["side"], order["notional"]
             )
