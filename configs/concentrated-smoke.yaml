@@ -54,6 +54,9 @@ concentrated:
   turnover_penalty: 0.35
   baseline_mix: 0.45
   momentum_window: 63
+  hold_deadband: 0.03
+  sticky_rank_buffer: 2
+  ensemble_max_members: 5
 
 paper:
   starting_cash: 100000

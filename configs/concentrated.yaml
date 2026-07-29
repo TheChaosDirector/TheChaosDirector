@@ -55,6 +55,9 @@ concentrated:
   turnover_penalty: 0.35         # PPO-only churn tax
   baseline_mix: 0.45             # blend momentum prior into ranks
   momentum_window: 63            # dumb-but-strong baseline lookback
+  hold_deadband: 0.03            # ignore tiny weight fidgets
+  sticky_rank_buffer: 2          # keep incumbents near the top-k
+  ensemble_max_members: 5        # prune weak greens from the deploy ensemble
 
 paper:
   starting_cash: 100000

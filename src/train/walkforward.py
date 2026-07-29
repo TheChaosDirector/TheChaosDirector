@@ -148,6 +148,7 @@ def _make_portfolio_env(
             excess_reward_weight=cfg.concentrated.excess_reward_weight,
             absolute_reward_weight=cfg.concentrated.absolute_reward_weight,
             turnover_penalty=cfg.concentrated.turnover_penalty,
+            hold_deadband=cfg.concentrated.hold_deadband,
         )
     return PortfolioEnv(**kwargs)
 

@@ -129,6 +129,38 @@ def _enforce_min_gross(
     return np.minimum(w, max_weight)
 
 
+def apply_hold_deadband(
+    prev: np.ndarray,
+    target: np.ndarray,
+    deadband: float,
+    *,
+    max_weight: float,
+    max_gross: float,
+    min_gross: float | None,
+    name_logits: np.ndarray | None = None,
+    valid_mask: np.ndarray | None = None,
+    max_names: int | None = None,
+) -> np.ndarray:
+    """Keep yesterday's weight when the proposed change is tiny (cuts fidgeting)."""
+    if deadband <= 0:
+        return target
+    prev = np.asarray(prev, dtype=np.float64)
+    out = np.asarray(target, dtype=np.float64).copy()
+    if prev.shape != out.shape:
+        return target
+    small = np.abs(out - prev) < deadband
+    out = np.where(small, prev, out)
+    out = np.minimum(np.maximum(out, 0.0), max_weight)
+    gross = float(out.sum())
+    if gross > max_gross and gross > 0:
+        out *= max_gross / gross
+    if min_gross is not None and min_gross > 0:
+        logits = name_logits if name_logits is not None else out
+        mask = valid_mask if valid_mask is not None else np.ones_like(out)
+        out = _enforce_min_gross(out, mask, logits, max_weight, min(min_gross, max_gross), max_names)
+    return out
+
+
 class PortfolioEnv(gym.Env):
     """Gymnasium environment over a contiguous window of market history."""
 
@@ -150,6 +182,7 @@ class PortfolioEnv(gym.Env):
         excess_reward_weight: float = 0.0,
         absolute_reward_weight: float = 1.0,
         turnover_penalty: float = 0.0,
+        hold_deadband: float = 0.0,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -168,6 +201,7 @@ class PortfolioEnv(gym.Env):
         self.excess_reward_weight = float(excess_reward_weight)
         self.absolute_reward_weight = float(absolute_reward_weight)
         self.turnover_penalty = float(turnover_penalty)
+        self.hold_deadband = float(hold_deadband)
 
         # Per-bar close-to-close benchmark return aligned to env step index t
         # (reward at t uses return from t → t+1). Length must cover [start, end).
@@ -228,6 +262,20 @@ class PortfolioEnv(gym.Env):
             max_names=self.max_names,
             min_gross=self.min_gross,
         )
+        if self.hold_deadband > 0 and float(self.weights.sum()) > 1e-9:
+            logits = np.asarray(action, dtype=np.float64)
+            name_logits = logits[:-1] if len(logits) == self.n_assets + 1 else target
+            target = apply_hold_deadband(
+                self.weights,
+                target,
+                self.hold_deadband,
+                max_weight=self.risk.max_weight_per_name,
+                max_gross=self.risk.max_gross_exposure,
+                min_gross=self.min_gross,
+                name_logits=name_logits,
+                valid_mask=valid,
+                max_names=self.max_names,
+            )
 
         turnover = float(np.abs(target - self.weights).sum())
         cost = turnover * self.cost_rate

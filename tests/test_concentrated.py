@@ -54,6 +54,9 @@ def test_concentrated_config_loads():
     assert cfg.concentrated.excess_reward_weight == 1.5
     assert cfg.concentrated.learner == "supervised"
     assert cfg.concentrated.train_cost_multiplier == 3.0
+    assert cfg.concentrated.hold_deadband == 0.03
+    assert cfg.concentrated.sticky_rank_buffer == 2
+    assert cfg.concentrated.ensemble_max_members == 5
     assert cfg.risk.max_weight_per_name == 0.35
     assert cfg.risk.drawdown_penalty == 0.08
     assert cfg.artifacts_dir.as_posix().endswith("concentrated")
@@ -129,3 +132,40 @@ def test_concentrated_reality_gate_rules(tmp_path, monkeypatch):
     report = check_reality_gate(cfg)
     assert report["passed"] is True
     assert report["details"]["positive_excess_fraction"] == 0.6
+
+
+def test_concentrated_walk_forward_oos_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    root = Path(__file__).resolve().parents[1]
+    cfg = load_config(str(root / "configs" / "concentrated-smoke.yaml"), mode="concentrated")
+    records = []
+    for i in range(3):
+        fold = cfg.artifacts_dir / "registry" / f"fold_{i:02d}"
+        fold.mkdir(parents=True, exist_ok=True)
+        dates = pd.bdate_range("2020-01-02", periods=5) + pd.offsets.BDay(30 * i)
+        j = pd.DataFrame(
+            {
+                "date": dates,
+                "net_return": [0.01, -0.005, 0.002, 0.0, 0.003],
+                "excess_return": [0.002, -0.001, 0.001, -0.0005, 0.0015],
+            }
+        )
+        j.to_csv(fold / "oos_journal.csv", index=False)
+        records.append(
+            {
+                "fold": i,
+                "out_of_sample": {"total_return": 0.01, "sharpe": 0.5},
+                "benchmark_oos": {"total_return": 0.0, "sharpe": 0.0},
+                "oos_excess_mean": float(j["excess_return"].mean()),
+            }
+        )
+    save_experiments(cfg, records)
+    from src.backtest.engine import _write_walk_forward_oos_report, backtest_dir
+
+    report = _write_walk_forward_oos_report(cfg)
+    assert report is not None
+    assert report["kind"] == "walk_forward_oos_only"
+    assert report["mode"] == "concentrated"
+    assert "mean_daily_excess" in report
+    assert (backtest_dir(cfg) / "walk_forward_oos" / "summary.json").exists()
+    assert (backtest_dir(cfg) / "walk_forward_oos" / "excess_returns.csv").exists()

@@ -17,7 +17,7 @@ import pandas as pd
 from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import resolve_pick
-from src.env.portfolio_env import action_to_weights
+from src.env.portfolio_env import action_to_weights, apply_hold_deadband
 from src.features.factory import build_daytrade_features, build_features
 from src.metrics.scorecard import plain_english, scorecard
 from src.modes import is_concentrated, is_daytrade
@@ -123,6 +123,20 @@ def _advance_portfolio(cfg: Config, lake: Lake, model, meta: dict, state: dict, 
             max_names=max_names,
             min_gross=min_gross,
         )
+        if is_concentrated(cfg) and cfg.concentrated.hold_deadband > 0:
+            logits = np.asarray(action, dtype=np.float64)
+            name_logits = logits[:-1] if len(logits) == len(tickers) + 1 else target
+            target = apply_hold_deadband(
+                prev_weights,
+                target,
+                cfg.concentrated.hold_deadband,
+                max_weight=cfg.risk.max_weight_per_name,
+                max_gross=cfg.risk.max_gross_exposure,
+                min_gross=min_gross,
+                name_logits=name_logits,
+                valid_mask=valid,
+                max_names=max_names,
+            )
         turnover = float(np.abs(target - prev_weights).sum())
         cost_frac = turnover * cfg.costs.total_bps / 1e4
         state["equity"] *= 1.0 - cost_frac

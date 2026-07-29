@@ -99,6 +99,12 @@ class ConcentratedCfg:
     baseline_mix: float = 0.45
     # Which lagged momentum feature to use as the dumb-but-strong prior.
     momentum_window: int = 63
+    # Ignore tiny day-to-day weight fidgets (fraction of portfolio).
+    hold_deadband: float = 0.03
+    # Keep incumbents if they remain within top (max_names + buffer) by score.
+    sticky_rank_buffer: int = 2
+    # Cap / prune green-fold ensembles so weak members don't dilute mean excess.
+    ensemble_max_members: int = 5
 
 
 @dataclass

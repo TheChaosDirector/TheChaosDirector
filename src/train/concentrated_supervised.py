@@ -46,6 +46,31 @@ def _zscore_1d(x: np.ndarray) -> np.ndarray:
     return np.where(np.isfinite(out), out, 0.0)
 
 
+def sticky_top_k(
+    scores: np.ndarray,
+    prev_weights: np.ndarray | None,
+    max_names: int,
+    sticky_rank_buffer: int = 2,
+) -> np.ndarray:
+    """Choose up to max_names names, preferring incumbents still near the top."""
+    n = len(scores)
+    k = min(max_names, n)
+    if k <= 0:
+        return np.array([], dtype=int)
+    order = np.argsort(-scores)  # best first
+    chosen: list[int] = []
+    if prev_weights is not None and sticky_rank_buffer > 0:
+        held = {i for i, w in enumerate(prev_weights) if w > 1e-3}
+        elite = set(order[: min(n, k + sticky_rank_buffer)].tolist())
+        for i in order:
+            if i in held and i in elite and len(chosen) < k:
+                chosen.append(int(i))
+    for i in order:
+        if int(i) not in chosen and len(chosen) < k:
+            chosen.append(int(i))
+    return np.asarray(chosen, dtype=int)
+
+
 class ConcentratedRankerAdapter:
     """Produces portfolio action logits from per-name predicted excess + momentum."""
 
@@ -59,6 +84,7 @@ class ConcentratedRankerAdapter:
         momentum_feature: str = "mom_63d",
         baseline_mix: float = 0.45,
         max_names: int = 6,
+        sticky_rank_buffer: int = 2,
     ):
         self.model = model
         self.n_assets = n_assets
@@ -67,6 +93,7 @@ class ConcentratedRankerAdapter:
         self.momentum_feature = momentum_feature
         self.baseline_mix = float(baseline_mix)
         self.max_names = int(max_names)
+        self.sticky_rank_buffer = int(sticky_rank_buffer)
         if momentum_feature in self.feature_names:
             self._mom_idx = self.feature_names.index(momentum_feature)
         else:
@@ -85,13 +112,22 @@ class ConcentratedRankerAdapter:
         mix = np.clip(self.baseline_mix, 0.0, 1.0)
         return (1.0 - mix) * _zscore_1d(pred) + mix * _zscore_1d(mom)
 
+    def _prev_weights(self, obs: np.ndarray) -> np.ndarray:
+        obs = np.asarray(obs, dtype=np.float64).reshape(-1)
+        start = self.n_assets * self.n_features
+        return obs[start : start + self.n_assets]
+
     def predict(self, obs, deterministic: bool = True):
         scores = self.score_names(obs)
+        keep = sticky_top_k(
+            scores,
+            self._prev_weights(obs),
+            self.max_names,
+            self.sticky_rank_buffer,
+        )
         action = np.full(self.n_assets + 1, -8.0, dtype=np.float32)
-        # Keep only top-k logits high; cash stays very low (min_gross forces invest).
-        k = min(self.max_names, self.n_assets)
-        keep = np.argpartition(scores, -k)[-k:]
-        action[keep] = (scores[keep] * 4.0).astype(np.float32)
+        if len(keep):
+            action[keep] = (scores[keep] * 4.0).astype(np.float32)
         action[-1] = -10.0
         return action, None
 
@@ -108,6 +144,7 @@ class ConcentratedRankerAdapter:
                 "momentum_feature": self.momentum_feature,
                 "baseline_mix": self.baseline_mix,
                 "max_names": self.max_names,
+                "sticky_rank_buffer": self.sticky_rank_buffer,
             },
             path,
         )
@@ -123,6 +160,7 @@ class ConcentratedRankerAdapter:
             momentum_feature=blob.get("momentum_feature", "mom_63d"),
             baseline_mix=blob.get("baseline_mix", 0.45),
             max_names=blob.get("max_names", 6),
+            sticky_rank_buffer=blob.get("sticky_rank_buffer", 2),
         )
 
 
@@ -139,6 +177,7 @@ class ConcentratedEnsembleAdapter:
         self.baseline_mix = adapters[0].baseline_mix
         self.momentum_feature = adapters[0].momentum_feature
         self.feature_names = adapters[0].feature_names
+        self.sticky_rank_buffer = adapters[0].sticky_rank_buffer
         self._mom_idx = adapters[0]._mom_idx
 
     def score_names(self, obs: np.ndarray) -> np.ndarray:
@@ -148,12 +187,22 @@ class ConcentratedEnsembleAdapter:
             scores = s if scores is None else scores + s
         return scores / len(self.adapters)
 
+    def _prev_weights(self, obs: np.ndarray) -> np.ndarray:
+        obs = np.asarray(obs, dtype=np.float64).reshape(-1)
+        start = self.n_assets * self.n_features
+        return obs[start : start + self.n_assets]
+
     def predict(self, obs, deterministic: bool = True):
         scores = self.score_names(obs)
+        keep = sticky_top_k(
+            scores,
+            self._prev_weights(obs),
+            self.max_names,
+            self.sticky_rank_buffer,
+        )
         action = np.full(self.n_assets + 1, -8.0, dtype=np.float32)
-        k = min(self.max_names, self.n_assets)
-        keep = np.argpartition(scores, -k)[-k:]
-        action[keep] = (scores[keep] * 4.0).astype(np.float32)
+        if len(keep):
+            action[keep] = (scores[keep] * 4.0).astype(np.float32)
         action[-1] = -10.0
         return action, None
 
@@ -231,6 +280,7 @@ def train_supervised_fold(cfg: Config, fold: Fold) -> dict:
         momentum_feature=mom_feat,
         baseline_mix=cfg.concentrated.baseline_mix,
         max_names=cfg.concentrated.max_names,
+        sticky_rank_buffer=cfg.concentrated.sticky_rank_buffer,
     )
 
     harsh = float(cfg.concentrated.train_cost_multiplier)
@@ -330,6 +380,32 @@ def _is_green(r: dict) -> bool:
     )
 
 
+def prune_ensemble_members(
+    green: list[dict],
+    *,
+    max_members: int,
+) -> list[dict]:
+    """Keep median-or-better green folds by OOS excess, capped at max_members.
+
+    Reality gate still grades *all* folds; this only decides who sits in the
+    deployed ensemble so weak greens don't dilute the mean.
+    """
+    if not green:
+        return []
+    scored = sorted(
+        green,
+        key=lambda r: float(r.get("oos_excess_mean") or 0.0),
+        reverse=True,
+    )
+    excesses = [float(r.get("oos_excess_mean") or 0.0) for r in scored]
+    median_ex = float(np.median(excesses))
+    kept = [r for r in scored if float(r.get("oos_excess_mean") or 0.0) >= median_ex]
+    if not kept:
+        kept = scored[:1]
+    cap = max(1, int(max_members))
+    return kept[:cap]
+
+
 def run_supervised_training(cfg: Config) -> dict:
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from dataclasses import asdict
@@ -389,15 +465,20 @@ def run_supervised_training(cfg: Config) -> dict:
         ),
     )
 
-    if len(green) >= 2:
+    ensemble_pool = prune_ensemble_members(
+        green, max_members=cfg.concentrated.ensemble_max_members
+    )
+    if len(ensemble_pool) >= 2:
         adapters = [
             ConcentratedRankerAdapter.load(fold_dir(cfg, r["fold"]) / "model.joblib")
-            for r in green
+            for r in ensemble_pool
         ]
         ensemble = ConcentratedEnsembleAdapter(adapters)
         model_path = str(registry_dir(cfg) / "ensemble.joblib")
         ensemble.save(model_path)
-        selected_by = f"ensemble_of_{len(green)}_green_folds"
+        selected_by = (
+            f"pruned_ensemble_{len(ensemble_pool)}_of_{len(green)}_green_folds"
+        )
         champ_fold = best["fold"]
         learner = "concentrated_supervised_ensemble"
     else:
@@ -416,11 +497,15 @@ def run_supervised_training(cfg: Config) -> dict:
         "selected_by": selected_by,
         "positive_oos_folds": len(green),
         "total_folds": len(records),
-        "ensemble_folds": [r["fold"] for r in green] if len(green) >= 2 else None,
+        "ensemble_folds": [r["fold"] for r in ensemble_pool] if len(ensemble_pool) >= 2 else None,
+        "green_folds": [r["fold"] for r in green],
         "max_names": cfg.concentrated.max_names,
         "min_gross_exposure": cfg.concentrated.min_gross_exposure,
         "baseline_mix": cfg.concentrated.baseline_mix,
         "train_cost_multiplier": cfg.concentrated.train_cost_multiplier,
+        "hold_deadband": cfg.concentrated.hold_deadband,
+        "sticky_rank_buffer": cfg.concentrated.sticky_rank_buffer,
+        "ensemble_max_members": cfg.concentrated.ensemble_max_members,
         "metrics": best,
         "config_path": cfg.config_path,
     }
