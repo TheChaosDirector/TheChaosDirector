@@ -89,13 +89,14 @@ chmod +x scripts/pack-champion.sh
 
 ### C) Cursor Automation
 
-In [Cursor Automations](https://cursor.com/automations), create a weekday schedule, attach this repo, and paste the ready-made prompt from:
+Automation: [Daily paper trader](https://cursor.com/automations/608d1cba-8af4-11f1-b532-320a589b8025)
 
-[`prompts/cursor-alpaca-daily.md`](prompts/cursor-alpaca-daily.md)
+1. In the automation settings, attach repo `TheChaosDirector/TheChaosDirector` and set the branch to **`cursor/autonomous-trading-agent-d8e6`** (not empty `main`).
+2. Paste / keep the prompt from [`prompts/cursor-alpaca-daily.md`](prompts/cursor-alpaca-daily.md) (it checks out that trading branch every run).
+3. Schedule cron suggestion: `30 14 * * 1-5`.
+4. Paper API keys as Cloud Agent **Runtime Secrets**.
 
-Schedule cron suggestion: `30 14 * * 1-5`. Put paper API keys in Cloud Agent **Runtime Secrets**.
-
-That prompt: downloads the champion, paper-rebalances, grades the choice diary, then **commits/pushes** `experience/portfolio/` so the history survives.
+That prompt: uses the trading branch, downloads the champion, paper-rebalances, grades the choice diary, then **commits/pushes** `experience/portfolio/` so the history survives.
 
 ## Choice diary → future training data
 
