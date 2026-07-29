@@ -131,4 +131,56 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
         bench_card["total_return"] * 100,
         bench_card["sharpe"],
     )
+    if cfg.mode == "daytrade" and tag == "base":
+        _write_walk_forward_oos_report(cfg)
     return summary
+
+
+def _write_walk_forward_oos_report(cfg: Config) -> dict | None:
+    """Stitch exam-only journals — the honest grade, free of train-window contamination."""
+    from src.registry.store import load_experiments, fold_dir
+
+    records = load_experiments(cfg)
+    if not records:
+        return None
+    frames = []
+    for r in records:
+        path = fold_dir(cfg, r["fold"]) / "oos_journal.csv"
+        if not path.exists():
+            continue
+        j = pd.read_csv(path, parse_dates=["date"]).set_index("date")
+        frames.append(j["net_return"])
+    if not frames:
+        return None
+    rets = pd.concat(frames).sort_index()
+    rets = rets[~rets.index.duplicated(keep="first")]
+    card = scorecard(rets)
+    green = sum(
+        1
+        for r in records
+        if r["out_of_sample"]["total_return"] > 0 and r["out_of_sample"]["sharpe"] > 0
+    )
+    report = {
+        "kind": "walk_forward_oos_only",
+        "note": (
+            "Only never-seen exam windows, stitched together. Prefer this over the "
+            "full-history backtest when judging daytrade skill."
+        ),
+        "green_folds": green,
+        "total_folds": len(records),
+        "green_fraction": green / len(records),
+        "scorecard": card,
+        "plain_english": plain_english(card, "walk-forward daytrade (exam windows only)"),
+    }
+    out = backtest_dir(cfg) / "walk_forward_oos"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "summary.json").write_text(json.dumps(report, indent=2))
+    rets.to_csv(out / "returns.csv")
+    log.info(
+        "Walk-forward OOS-only: %.1f%% (Sharpe %.2f) | green folds %d/%d",
+        card["total_return"] * 100,
+        card["sharpe"],
+        green,
+        len(records),
+    )
+    return report

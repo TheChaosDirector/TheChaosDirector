@@ -54,3 +54,7 @@ paper:
 referee:
   leakage_sample_dates: 20       # random dates to re-verify features on
   cheat_corr_threshold: 0.30     # |corr(feature, same-bar future return)| above this = suspicious
+
+alpaca:
+  min_notional: 25.0             # ignore tiny drifts under this many dollars
+  refresh_data: true             # pull fresh Yahoo prices before each rebalance

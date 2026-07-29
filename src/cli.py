@@ -1,11 +1,10 @@
 """Command-line entrypoint for the lab.
 
 Usage:
-    python -m src.cli download [--config configs/smoke.yaml] [--synthetic]
-    python -m src.cli train    [--config ...] [--mode portfolio|daytrade]
-    python -m src.cli backtest [--config ...] [--mode ...]
-    python -m src.cli paper    [--config ...] [--mode ...] [--days 5]
-    python -m src.cli referee  [--config ...] [--mode ...]
+    python -m src.cli download ...
+    python -m src.cli train|backtest|paper|referee ...
+    python -m src.cli alpaca-status
+    python -m src.cli alpaca-rebalance [--execute] [--force] [--no-refresh]
 """
 
 from __future__ import annotations
@@ -13,11 +12,34 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from pathlib import Path
 
 from src.config import VALID_MODES, load_config
 
 
+def _load_dotenv() -> None:
+    """Load local .env if present (keys stay off git)."""
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path)
+    except Exception:
+        # Fallback: tiny parser so missing python-dotenv doesn't block.
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            import os
+
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
 def main() -> None:
+    _load_dotenv()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     parser = argparse.ArgumentParser(prog="src.cli", description="Autonomous Trading Agent Lab")
@@ -46,8 +68,40 @@ def main() -> None:
 
     add("referee", "Run the anti-cheat report")
 
+    add("alpaca-status", "Show Alpaca PAPER account equity/positions/clock", with_mode=True)
+
+    p_live = add(
+        "alpaca-rebalance",
+        "Daily portfolio rebalance on Alpaca PAPER (dry-run unless --execute)",
+        with_mode=True,
+    )
+    p_live.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually submit paper orders (default is dry-run plan only)",
+    )
+    p_live.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow submitting even if the US market clock says closed",
+    )
+    p_live.add_argument(
+        "--no-refresh",
+        action="store_true",
+        help="Skip refreshing the Yahoo price lake before targeting",
+    )
+    p_live.add_argument(
+        "--min-notional",
+        type=float,
+        default=None,
+        help="Ignore drifts smaller than this many dollars (default from config)",
+    )
+
     args = parser.parse_args()
     mode = getattr(args, "mode", None)
+    # Alpaca commands default to portfolio mode.
+    if args.command.startswith("alpaca") and mode is None:
+        mode = "portfolio"
     cfg = load_config(args.config, mode=mode)
 
     if args.command == "download":
@@ -87,6 +141,27 @@ def main() -> None:
         report = run_referee(cfg)
         print(json.dumps(report, indent=2))
         print("\n" + report["verdict"])
+    elif args.command == "alpaca-status":
+        from src.live.rebalance import status
+
+        report = status(cfg)
+        print(json.dumps(report, indent=2))
+    elif args.command == "alpaca-rebalance":
+        from src.live.rebalance import rebalance
+
+        report = rebalance(
+            cfg,
+            execute=bool(args.execute),
+            refresh_data=not bool(args.no_refresh),
+            force=bool(args.force),
+            min_notional=args.min_notional,
+        )
+        print(json.dumps(report, indent=2))
+        if not args.execute:
+            print(
+                "\nDry-run complete. To send these orders to Alpaca PAPER, add --execute "
+                "(and --force if the market is closed)."
+            )
 
 
 if __name__ == "__main__":

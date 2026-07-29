@@ -1,11 +1,11 @@
 # Autonomous Trading Agent Lab
 
 A hobby research lab that trains AI trading brains on years of US stock market
-history, grades them honestly, and paper-trades with fake money.
+history, grades them honestly, and can rebalance an **Alpaca PAPER** (practice)
+account every trading day.
 
-**No real brokerage. No real money. No promises of profit.** The agent gets a
-lot of data and freedom, and a built-in referee makes sure it never cheats by
-peeking at the future.
+**Practice money by default. No promises of profit.** Live/real-money trading is
+intentionally not wired up here.
 
 ## Two modes
 
@@ -30,6 +30,44 @@ Artifacts for each mode live under `artifacts/<mode>/` (or `artifacts/smoke/<mod
 pip install -r requirements.txt
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
+
+## Hook up Alpaca PAPER (trade every day with practice money)
+
+1. Create paper API keys in the Alpaca dashboard (Paper Trading → API Keys).
+2. Copy env template and fill keys locally (do **not** commit `.env`):
+
+```bash
+cp .env.example .env
+# edit .env with your ALPACA_API_KEY and ALPACA_SECRET_KEY
+```
+
+3. Check the connection:
+
+```bash
+python -m src.cli alpaca-status --config configs/default.yaml --mode portfolio
+```
+
+4. Dry-run today’s rebalance plan (no orders sent):
+
+```bash
+python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --no-refresh
+```
+
+5. Send the orders to Alpaca PAPER:
+
+```bash
+python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute
+# if the market clock says closed but you still want paper orders:
+python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute --force
+```
+
+6. Optional: run once per weekday after the US close (example cron):
+
+```cron
+30 16 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute >> logs/alpaca.log 2>&1
+```
+
+Plans/executions land in `artifacts/portfolio/alpaca_paper/`.
 
 ## Quickstart — portfolio smoke (~minutes with parallel folds)
 

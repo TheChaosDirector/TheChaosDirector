@@ -81,6 +81,13 @@ class DaytradeCfg:
 
 
 @dataclass
+class AlpacaCfg:
+    # Practice-money daily rebalance settings. Live trading is intentionally unsupported here.
+    min_notional: float = 25.0  # ignore weight drifts smaller than this many dollars
+    refresh_data: bool = True
+
+
+@dataclass
 class PaperCfg:
     starting_cash: float = 100_000.0
 
@@ -107,6 +114,7 @@ class Config:
     daytrade: DaytradeCfg = field(default_factory=DaytradeCfg)
     paper: PaperCfg = field(default_factory=PaperCfg)
     referee: RefereeCfg = field(default_factory=RefereeCfg)
+    alpaca: AlpacaCfg = field(default_factory=AlpacaCfg)
     config_path: str = ""
 
     def __post_init__(self) -> None:
@@ -134,6 +142,7 @@ _SECTIONS = {
     "daytrade": DaytradeCfg,
     "paper": PaperCfg,
     "referee": RefereeCfg,
+    "alpaca": AlpacaCfg,
 }
 
 
