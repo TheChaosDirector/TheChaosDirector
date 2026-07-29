@@ -17,7 +17,8 @@ from src.env.portfolio_env import PortfolioEnv
 from src.features.factory import build_features, warmup_days
 from src.metrics.scorecard import plain_english, scorecard
 from src.registry.store import load_champion_model
-from src.train.walkforward import rollout
+from src.train.walkforward import _subset_daytrade_universe, rollout
+
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,17 @@ def backtest_dir(cfg: Config) -> Path:
 def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -> dict:
     lake = Lake(cfg)
     close = lake.close
-    panel = build_features(close, lake.volume, cfg.features, lake.benchmark)
+    volume = lake.volume
+
+    if cfg.mode == "daytrade":
+        open_ = lake.open.reindex_like(close)
+        close, volume, open_ = _subset_daytrade_universe(
+            close, volume, open_, lake.benchmark, cfg.daytrade.max_names
+        )
+    else:
+        open_ = None
+
+    panel = build_features(close, volume, cfg.features, lake.benchmark)
 
     model, meta = load_champion_model(cfg)
     if meta["tickers"] != panel.tickers:
@@ -53,6 +64,7 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
             start=start,
             end=end,
             cost_multiplier=cost_multiplier,
+            benchmark=lake.benchmark,
         )
         journal = rollout(model, env)
         weights = None

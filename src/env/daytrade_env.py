@@ -4,12 +4,13 @@ Rules (plain English):
 
 - Every morning the agent MUST choose exactly one stock/ETF. Sitting in cash
   is not allowed.
-- It may emit a "reluctance" score. If that score is high, we log
-  ``forced=True`` — meaning "I wanted to hold, but the rules made me go in."
-  Reluctance never cancels the trade.
+- It also chooses whether to mark the trade as ``forced`` ("I wanted to hold,
+  but the rules made me go in"). That flag is logged only — it never cancels
+  the trade.
 - Fill at today's open, exit at today's close. Costs are charged on both legs.
-- Clues are the same lagged feature panel as the portfolio mode (prior-day
-  information only).
+- Clues are the lagged feature panel (prior-day information only).
+- Reward is mainly *excess* open→close return vs the benchmark after costs,
+  so the brain is graded on stock-picking skill, not just market weather.
 """
 
 from __future__ import annotations
@@ -23,32 +24,32 @@ from src.config import CostsCfg, DaytradeCfg, RiskCfg
 from src.features.factory import FeaturePanel
 
 
-def pick_one(
-    action: np.ndarray,
+def resolve_pick(
+    action: np.ndarray | int,
     valid_mask: np.ndarray,
-    forced_threshold: float,
-) -> tuple[int, float, bool]:
-    """Map raw action → (ticker_index, reluctance_01, forced_flag).
+) -> tuple[int, bool]:
+    """Map a MultiDiscrete / (ticker, forced) action onto a valid name.
 
-    The last action dimension is reluctance. The rest are scores over names;
-    we take argmax among names that have a valid open and close today.
+    If the chosen ticker can't trade today, fall back to the first valid name
+    (benchmark is always expected to be valid on market days).
     """
-    action = np.asarray(action, dtype=np.float64).reshape(-1)
-    scores = action[:-1]
-    reluctance_raw = float(action[-1])
-    # Squash to 0..1 so the threshold is human-readable.
-    reluctance = 1.0 / (1.0 + np.exp(-reluctance_raw))
-
-    masked = np.where(valid_mask > 0, scores, -np.inf)
-    if not np.isfinite(masked).any():
-        # Absolute last resort: pick the first name that has any finite score,
-        # else index 0. The env guarantees at least the benchmark is valid.
-        idx = int(np.argmax(valid_mask)) if valid_mask.sum() > 0 else 0
+    action = np.asarray(action).reshape(-1)
+    if action.size == 1:
+        raw_idx = int(action[0])
+        forced = False
     else:
-        idx = int(np.argmax(masked))
+        raw_idx = int(action[0])
+        forced = bool(int(action[1]))
 
-    forced = reluctance >= forced_threshold
-    return idx, float(reluctance), bool(forced)
+    n = len(valid_mask)
+    raw_idx = int(np.clip(raw_idx, 0, n - 1))
+    if valid_mask[raw_idx] > 0:
+        return raw_idx, forced
+
+    valid_idxs = np.flatnonzero(valid_mask > 0)
+    if len(valid_idxs) == 0:
+        return 0, forced
+    return int(valid_idxs[0]), forced
 
 
 class DaytradeEnv(gym.Env):
@@ -67,6 +68,7 @@ class DaytradeEnv(gym.Env):
         start: int,
         end: int,
         cost_multiplier: float = 1.0,
+        benchmark: str | None = None,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -83,13 +85,18 @@ class DaytradeEnv(gym.Env):
         self.daytrade = daytrade
         self.start = start
         self.end = end
-        # Buy + sell ⇒ two charges of the per-leg cost rate.
         self.cost_rate = costs.total_bps / 1e4 * cost_multiplier
 
         self.n_assets = len(panel.tickers)
-        obs_dim = self.n_assets * panel.n_features + 2  # + equity_norm, drawdown
+        self.benchmark = benchmark or panel.tickers[0]
+        if self.benchmark not in panel.tickers:
+            raise ValueError(f"Benchmark {self.benchmark} not in panel tickers")
+        self.bench_idx = panel.tickers.index(self.benchmark)
+
+        obs_dim = self.n_assets * panel.n_features + 2
         self.observation_space = spaces.Box(-np.inf, np.inf, (obs_dim,), np.float32)
-        self.action_space = spaces.Box(-5.0, 5.0, (self.n_assets + 1,), np.float32)
+        # [which ticker, forced_flag] — forced never skips the trade.
+        self.action_space = spaces.MultiDiscrete([self.n_assets, 2])
 
         self._reset_state()
 
@@ -118,13 +125,22 @@ class DaytradeEnv(gym.Env):
     def step(self, action: np.ndarray):
         t = self.t
         valid = self._valid_mask(t)
-        idx, reluctance, forced = pick_one(action, valid, self.daytrade.forced_threshold)
+        idx, forced = resolve_pick(action, valid)
 
         o = float(self.opens[t, idx])
         c = float(self.closes[t, idx])
         gross_ret = c / o - 1.0
-        cost = 2.0 * self.cost_rate  # open buy + close sell
+        cost = 2.0 * self.cost_rate
         net_ret = gross_ret - cost
+
+        bo = float(self.opens[t, self.bench_idx])
+        bc = float(self.closes[t, self.bench_idx])
+        if np.isfinite(bo) and np.isfinite(bc) and bo > 0:
+            bench_gross = bc / bo - 1.0
+            bench_net = bench_gross - cost
+        else:
+            bench_gross = 0.0
+            bench_net = -cost
 
         self.equity *= 1.0 + net_ret
         self.peak = max(self.peak, self.equity)
@@ -132,7 +148,14 @@ class DaytradeEnv(gym.Env):
         dd_increment = max(0.0, new_dd - self.drawdown)
         self.drawdown = new_dd
 
-        reward = float(np.log(max(1.0 + net_ret, 1e-6))) - self.risk.drawdown_penalty * dd_increment
+        # Teach stock-picking: beat same-day benchmark open→close after costs,
+        # while still caring about absolute P&L and drawdowns.
+        excess = net_ret - bench_net
+        reward = (
+            float(excess)
+            + 0.5 * float(net_ret)
+            - self.risk.drawdown_penalty * dd_increment
+        )
 
         self.history.append(
             {
@@ -142,10 +165,12 @@ class DaytradeEnv(gym.Env):
                 "close": c,
                 "gross_return": gross_ret,
                 "net_return": net_ret,
+                "bench_net_return": bench_net,
+                "excess_return": excess,
                 "cost": cost,
-                "turnover": 2.0,  # full book in + full book out
+                "turnover": 2.0,
                 "equity": self.equity,
-                "reluctance": reluctance,
+                "reluctance": 1.0 if forced else 0.0,
                 "forced": forced,
             }
         )

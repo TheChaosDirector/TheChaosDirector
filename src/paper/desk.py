@@ -16,11 +16,12 @@ import pandas as pd
 
 from src.config import Config
 from src.data.lake import Lake
-from src.env.daytrade_env import pick_one
+from src.env.daytrade_env import resolve_pick
 from src.env.portfolio_env import action_to_weights
 from src.features.factory import build_features
 from src.metrics.scorecard import plain_english, scorecard
 from src.registry.store import load_champion_model, load_experiments
+from src.train.walkforward import _subset_daytrade_universe
 
 log = logging.getLogger(__name__)
 
@@ -146,14 +147,18 @@ def _advance_daytrade(cfg: Config, lake: Lake, model, meta: dict, state: dict, d
         next_pos = all_dates.get_loc(pd.Timestamp(state["last_date"])) + 1
 
     tickers = meta["tickers"]
+    # Align lake frames to the champion's ticker set (same subset used in training).
+    close = lake.close.reindex(columns=tickers)
+    open_ = lake.open.reindex(columns=tickers)
+    volume = lake.volume.reindex(columns=tickers)
+
     processed = 0
     for pos in range(next_pos, min(next_pos + days, len(all_dates))):
         today = all_dates[pos]
 
-        # Blindfold: features from history ending *yesterday* conceptually come
-        # from the lagged panel built on data through today (factory shifts by 1).
-        view = lake.as_of(today)
-        panel = build_features(view.close, view.volume, cfg.features, lake.benchmark)
+        view_close = close.loc[:today]
+        view_volume = volume.loc[:today]
+        panel = build_features(view_close, view_volume, cfg.features, lake.benchmark)
         obs_features = panel.values[-1].reshape(-1)
         drawdown = 0.0
         if state["cash_start"] > 0:
@@ -164,10 +169,11 @@ def _advance_daytrade(cfg: Config, lake: Lake, model, meta: dict, state: dict, d
         ).astype(np.float32)
 
         action, _ = model.predict(obs, deterministic=True)
-        opens = lake.open.loc[today, tickers].values.astype(float)
-        closes = lake.close.loc[today, tickers].values.astype(float)
+        opens = open_.loc[today, tickers].values.astype(float)
+        closes = close.loc[today, tickers].values.astype(float)
         valid = (np.isfinite(opens) & np.isfinite(closes) & (opens > 0) & (closes > 0)).astype(float)
-        idx, reluctance, forced = pick_one(action, valid, cfg.daytrade.forced_threshold)
+        idx, forced = resolve_pick(action, valid)
+        reluctance = 1.0 if forced else 0.0
         ticker = tickers[idx]
         o = float(opens[idx])
         c = float(closes[idx])

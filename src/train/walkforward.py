@@ -22,6 +22,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 
+import numpy as np
 import pandas as pd
 
 from src.config import Config, load_config
@@ -118,6 +119,7 @@ def _make_daytrade_env(open_, close, panel, cfg: Config, start: int, end: int, c
         start=start,
         end=end,
         cost_multiplier=cost_multiplier,
+        benchmark=cfg.universe.benchmark,
     )
 
 
@@ -125,10 +127,26 @@ def _benchmark_returns(close: pd.DataFrame, benchmark: str, start: int, end: int
     # end is exclusive for the env; benchmark series uses closes over the window.
     bench = close[benchmark].iloc[start:end]
     if len(bench) < 2:
-        # Daytrade grades same-day open→close; approximate bench with close-to-close
-        # over the same dates by extending one bar when available.
         bench = close[benchmark].iloc[start : min(end + 1, len(close))]
     return bench.pct_change().dropna()
+
+
+def _daytrade_benchmark_returns(open_: pd.DataFrame, close: pd.DataFrame, benchmark: str, start: int, end: int) -> pd.Series:
+    """Same-day open→close returns for the benchmark (fair daytrade yardstick)."""
+    o = open_[benchmark].iloc[start:end]
+    c = close[benchmark].iloc[start:end]
+    return (c / o - 1.0).replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def _subset_daytrade_universe(close, volume, open_, benchmark: str, max_names: int | None):
+    """Keep benchmark + the most liquid names so the daytrader can actually learn."""
+    if not max_names or max_names >= close.shape[1]:
+        return close, volume, open_
+    dollar = (close * volume).median()
+    ranked = [t for t in dollar.sort_values(ascending=False).index if t != benchmark]
+    keep = [benchmark] + ranked[: max(0, max_names - 1)]
+    keep = [t for t in keep if t in close.columns]
+    return close[keep], volume[keep], open_[keep]
 
 
 def train_one_fold(cfg: Config, fold: Fold) -> dict:
@@ -139,24 +157,35 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
     t0 = time.time()
     lake = Lake(cfg)
     close = lake.close
-    panel = build_features(close, lake.volume, cfg.features, lake.benchmark)
+    volume = lake.volume
+    panel = None
 
     if cfg.mode == "daytrade":
         open_ = lake.open.reindex_like(close)
+        close, volume, open_ = _subset_daytrade_universe(
+            close, volume, open_, lake.benchmark, cfg.daytrade.max_names
+        )
+        panel = build_features(close, volume, cfg.features, lake.benchmark)
         train_env = Monitor(_make_daytrade_env(open_, close, panel, cfg, fold.train_start, fold.train_end))
         is_env = _make_daytrade_env(open_, close, panel, cfg, fold.train_start, fold.train_end)
         oos_env = _make_daytrade_env(open_, close, panel, cfg, fold.test_start, fold.test_end)
+        policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
     else:
+        panel = build_features(close, volume, cfg.features, lake.benchmark)
         train_env = Monitor(_make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end))
         is_env = _make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end)
         oos_env = _make_portfolio_env(close, panel, cfg, fold.test_start, fold.test_end)
+        policy_kwargs = dict(net_arch=[64, 64])
+        open_ = None
 
     model = PPO(
         "MlpPolicy",
         train_env,
         learning_rate=cfg.training.learning_rate,
-        n_steps=cfg.training.n_env_steps,
+        n_steps=max(64, cfg.training.n_env_steps),
+        batch_size=min(64, max(32, cfg.training.n_env_steps // 4)),
         seed=cfg.training.seed + fold.index,
+        policy_kwargs=policy_kwargs,
         verbose=0,
     )
     model.learn(total_timesteps=cfg.training.total_timesteps)
@@ -168,7 +197,10 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
     is_card = scorecard(is_journal["net_return"], turnover)
     oos_card = scorecard(oos_journal["net_return"], oos_turnover)
 
-    bench = _benchmark_returns(close, lake.benchmark, fold.test_start, fold.test_end)
+    if cfg.mode == "daytrade":
+        bench = _daytrade_benchmark_returns(open_, close, lake.benchmark, fold.test_start, fold.test_end)
+    else:
+        bench = _benchmark_returns(close, lake.benchmark, fold.test_start, fold.test_end)
     bench_card = scorecard(bench)
 
     metrics = {
@@ -187,9 +219,12 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         "out_of_sample": oos_card,
         "benchmark_oos": bench_card,
         "train_seconds": round(time.time() - t0, 1),
+        "n_tickers": len(panel.tickers),
     }
     if cfg.mode == "daytrade" and "forced" in oos_journal.columns:
         metrics["forced_rate_oos"] = float(oos_journal["forced"].mean())
+    if cfg.mode == "daytrade" and "excess_return" in oos_journal.columns:
+        metrics["oos_excess_mean"] = float(oos_journal["excess_return"].mean())
 
     save_fold(cfg, fold.index, model, metrics)
     oos_journal.to_csv(fold_dir(cfg, fold.index) / "oos_journal.csv")
@@ -240,7 +275,13 @@ def run_training(cfg: Config) -> dict:
 
     lake = Lake(cfg)
     close = lake.close
-    panel = build_features(close, lake.volume, cfg.features, lake.benchmark)
+    volume = lake.volume
+    if cfg.mode == "daytrade":
+        open_ = lake.open.reindex_like(close)
+        close, volume, _ = _subset_daytrade_universe(
+            close, volume, open_, lake.benchmark, cfg.daytrade.max_names
+        )
+    panel = build_features(close, volume, cfg.features, lake.benchmark)
     warmup = warmup_days(cfg.features)
     need_next_day = cfg.mode != "daytrade"
 
@@ -294,25 +335,59 @@ def run_training(cfg: Config) -> dict:
 
     save_experiments(cfg, records)
 
-    best = max(
-        records,
-        key=lambda r: (r["out_of_sample"]["sharpe"], r["out_of_sample"]["total_return"]),
-    )
+    # Consistency-first champion for daytrade: prefer exam windows that finished
+    # green (positive return + positive Sharpe). Fall back to best Sharpe if none.
+    if cfg.mode == "daytrade":
+        positive = [
+            r
+            for r in records
+            if r["out_of_sample"]["total_return"] > 0 and r["out_of_sample"]["sharpe"] > 0
+        ]
+        if positive:
+            best = max(
+                positive,
+                key=lambda r: (r["out_of_sample"]["sharpe"], r["out_of_sample"]["total_return"]),
+            )
+            selected_by = "best_positive_oos_sharpe"
+        else:
+            best = max(
+                records,
+                key=lambda r: (r["out_of_sample"]["sharpe"], r["out_of_sample"]["total_return"]),
+            )
+            selected_by = "best_oos_sharpe_no_positive_folds"
+        n_pos = len(positive)
+        log.info(
+            "Daytrade consistency: %d/%d exam folds finished green",
+            n_pos,
+            len(records),
+        )
+    else:
+        best = max(
+            records,
+            key=lambda r: (r["out_of_sample"]["sharpe"], r["out_of_sample"]["total_return"]),
+        )
+        selected_by = "out_of_sample.sharpe"
+        n_pos = None
+
     champion = {
         "fold": best["fold"],
         "mode": cfg.mode,
         "model_path": str(fold_dir(cfg, best["fold"]) / "model.zip"),
         "tickers": panel.tickers,
         "feature_names": panel.names,
-        "selected_by": "out_of_sample.sharpe",
+        "selected_by": selected_by,
+        "positive_oos_folds": n_pos,
+        "total_folds": len(records),
         "metrics": best,
         "config_path": cfg.config_path,
     }
     save_champion(cfg, champion)
     log.info(
-        "Champion (%s): fold %d (exam Sharpe %.2f)",
+        "Champion (%s): fold %d (exam Sharpe %.2f, return %.1f%%) via %s",
         cfg.mode,
         best["fold"],
         best["out_of_sample"]["sharpe"],
+        best["out_of_sample"]["total_return"] * 100,
+        selected_by,
     )
     return champion

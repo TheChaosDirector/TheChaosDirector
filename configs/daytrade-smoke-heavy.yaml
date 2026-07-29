@@ -1,0 +1,55 @@
+# Heavier smoke daytrade (same 12-ticker lake) for a fast consistency check.
+mode: daytrade
+
+paths:
+  lake_dir: data/lake-smoke
+  artifacts_dir: artifacts/smoke-heavy
+
+universe:
+  name: smoke
+  benchmark: SPY
+  min_history_days: 504
+  max_tickers: 30
+
+data:
+  start: "2015-01-01"
+  end: null
+  min_dollar_volume: 1000000
+
+features:
+  momentum_windows: [5, 21, 63]
+  vol_window: 21
+  volume_window: 21
+  ma_windows: [10, 50, 200]
+  regime_ma: 200
+
+costs:
+  commission_bps: 1.0
+  slippage_bps: 5.0
+  stress_multiplier: 3.0
+
+risk:
+  max_weight_per_name: 1.0
+  max_gross_exposure: 1.0
+  drawdown_penalty: 0.15
+
+training:
+  train_years: 2.0
+  test_months: 6
+  embargo_days: 5
+  total_timesteps: 250000
+  seed: 11
+  n_env_steps: 1024
+  learning_rate: 0.0003
+  n_workers: 4
+
+daytrade:
+  forced_threshold: 0.5
+  max_names: null
+
+paper:
+  starting_cash: 100000
+
+referee:
+  leakage_sample_dates: 10
+  cheat_corr_threshold: 0.30
