@@ -163,6 +163,7 @@ def rebalance(
     execute: bool = False,
     refresh_data: bool = True,
     force: bool = False,
+    skip_if_closed: bool = False,
     min_notional: float | None = None,
 ) -> dict:
     """Compute (and optionally send) the daily Alpaca paper rebalance."""
@@ -172,17 +173,39 @@ def rebalance(
     _ensure_portfolio_champion(cfg)
     min_notional = float(min_notional if min_notional is not None else cfg.alpaca.min_notional)
 
+    client = AlpacaPaperClient()
+    clock = client.clock()
+    market_open = bool(clock.get("is_open"))
+
+    if not market_open and execute and not force:
+        if skip_if_closed:
+            report = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "paper": True,
+                "execute": False,
+                "skipped": True,
+                "reason": "market_closed",
+                "market_open": False,
+                "next_open": clock.get("next_open"),
+                "next_close": clock.get("next_close"),
+                "n_orders": 0,
+                "orders": [],
+                "submitted": [],
+                "errors": [],
+            }
+            out = alpaca_dir(cfg)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "latest_plan.json").write_text(json.dumps(report, indent=2))
+            log.info("Market closed — skipping rebalance (automation-friendly).")
+            return report
+        raise RuntimeError(
+            "US market looks closed. Re-run with --force if you still want to send paper orders, "
+            "use --skip-if-closed for cron/CI, or omit --execute for a dry-run plan."
+        )
+
     if refresh_data:
         log.info("Refreshing price lake before rebalance...")
         run_download(cfg, synthetic=False)
-
-    client = AlpacaPaperClient()
-    clock = client.clock()
-    if not clock.get("is_open") and not force and execute:
-        raise RuntimeError(
-            "US market looks closed. Re-run with --force if you still want to send paper orders, "
-            "or omit --execute for a dry-run plan."
-        )
 
     acct = client.account()
     positions = client.positions()

@@ -61,11 +61,35 @@ python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfoli
 python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute --force
 ```
 
-6. Optional: run once per weekday after the US close (example cron):
+6. Automate it (pick one):
+
+### A) GitHub Actions (recommended “set and forget”)
+
+Runs weekdays from GitHub’s cloud — your laptop can be off.
+
+1. Repo → **Settings → Secrets and variables → Actions** → add:
+   - `ALPACA_API_KEY`
+   - `ALPACA_SECRET_KEY`  
+   (paper keys only — never live keys)
+2. Publish the frozen champion model as a tiny release asset (one-time, or again after retrain):
+
+```bash
+chmod +x scripts/pack-champion.sh
+./scripts/pack-champion.sh --publish
+```
+
+3. Merge the workflow on the default branch. File: `.github/workflows/alpaca-daily-paper.yml`  
+   Schedule: weekdays ~10:30 ET. Manual run: **Actions → Alpaca PAPER daily rebalance → Run workflow**.
+
+### B) Local cron (machine must be on, with `.env` + champion)
 
 ```cron
-30 16 * * 1-5 cd /path/to/repo && /usr/bin/python3 -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute >> logs/alpaca.log 2>&1
+30 10 * * 1-5 cd /path/to/repo && ./scripts/alpaca-daily-rebalance.sh >> logs/alpaca.log 2>&1
 ```
+
+### C) Cursor Automation
+
+In [Cursor Automations](https://cursor.com/automations), create a weekday schedule whose prompt is basically: “In this repo, run the Alpaca PAPER daily rebalance (`python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute --skip-if-closed`) and summarize what traded.” Put paper API keys in the Cloud Agent **environment secrets**, and make sure that environment has (or can download) the champion bundle — same idea as the GitHub release above. Cursor Automations are great when you want a human-readable daily note; GitHub Actions is simpler for “just place the paper orders.”
 
 Plans/executions land in `artifacts/portfolio/alpaca_paper/`.
 

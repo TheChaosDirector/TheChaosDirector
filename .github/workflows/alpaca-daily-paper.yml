@@ -1,0 +1,105 @@
+# Daily Alpaca PAPER portfolio rebalance (practice money only).
+#
+# Setup (one time):
+# 1. Repo → Settings → Secrets and variables → Actions
+#    Add: ALPACA_API_KEY, ALPACA_SECRET_KEY  (paper keys only)
+# 2. Publish the champion model release:
+#      ./scripts/pack-champion.sh --publish
+# 3. Merge this workflow to the default branch (schedule only runs there).
+# 4. Optional: Actions → "Alpaca PAPER daily rebalance" → Run workflow
+#
+name: Alpaca PAPER daily rebalance
+
+on:
+  schedule:
+    # Weekdays ~10:30 America/New_York (UTC shifts with DST; close enough after open)
+    - cron: "30 14 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Submit even if the US market clock says closed"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan only (do not submit orders)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpaca-paper-daily
+  cancel-in-progress: false
+
+jobs:
+  rebalance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download portfolio champion bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/bundles
+          if ! gh release download portfolio-champion \
+              --pattern 'portfolio-champion.zip' \
+              --dir artifacts/bundles; then
+            echo "::error::Missing GitHub release tag 'portfolio-champion'."
+            echo "On a machine that has your trained champion, run:"
+            echo "  ./scripts/pack-champion.sh --publish"
+            exit 1
+          fi
+          unzip -o artifacts/bundles/portfolio-champion.zip
+          test -f artifacts/portfolio/registry/champion.json
+          echo "Champion ready:"
+          python -c "import json; print(json.load(open('artifacts/portfolio/registry/champion.json'))['model_path'])"
+
+      - name: Rebalance Alpaca PAPER
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          if [[ -z "${ALPACA_API_KEY:-}" || -z "${ALPACA_SECRET_KEY:-}" ]]; then
+            echo "::error::Add repo secrets ALPACA_API_KEY and ALPACA_SECRET_KEY (paper keys only)."
+            exit 1
+          fi
+
+          ARGS=(--config configs/default.yaml --mode portfolio --skip-if-closed)
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "Manual dry-run (no --execute)"
+          else
+            ARGS+=(--execute)
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.force }}" == "true" ]]; then
+            ARGS+=(--force)
+          fi
+
+          python -m src.cli alpaca-rebalance "${ARGS[@]}"
+
+      - name: Upload plan/execution journal
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpaca-paper-${{ github.run_id }}
+          path: artifacts/portfolio/alpaca_paper/
+          if-no-files-found: ignore
+          retention-days: 30

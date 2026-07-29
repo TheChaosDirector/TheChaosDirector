@@ -86,6 +86,11 @@ def main() -> None:
         help="Allow submitting even if the US market clock says closed",
     )
     p_live.add_argument(
+        "--skip-if-closed",
+        action="store_true",
+        help="For cron/CI: exit cleanly (no error) when the US market is closed",
+    )
+    p_live.add_argument(
         "--no-refresh",
         action="store_true",
         help="Skip refreshing the Yahoo price lake before targeting",
@@ -154,10 +159,13 @@ def main() -> None:
             execute=bool(args.execute),
             refresh_data=not bool(args.no_refresh),
             force=bool(args.force),
+            skip_if_closed=bool(args.skip_if_closed),
             min_notional=args.min_notional,
         )
         print(json.dumps(report, indent=2))
-        if not args.execute:
+        if report.get("skipped"):
+            print("\nSkipped: US market is closed (automation-friendly exit).")
+        elif not args.execute:
             print(
                 "\nDry-run complete. To send these orders to Alpaca PAPER, add --execute "
                 "(and --force if the market is closed)."
