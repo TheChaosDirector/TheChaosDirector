@@ -28,7 +28,7 @@ import pandas as pd
 
 from src.config import Config
 from src.data.lake import Lake
-from src.features.factory import FeaturePanel, build_features, warmup_days
+from src.features.factory import FeaturePanel, build_daytrade_features, build_features, warmup_days
 from src.registry.store import load_experiments
 
 log = logging.getLogger(__name__)
@@ -42,7 +42,11 @@ def referee_dir(cfg: Config) -> Path:
 def check_lookahead_recompute(cfg: Config, lake: Lake, n_dates: int | None = None) -> dict:
     """Rebuild features from future-deleted data and demand identical values."""
     close, volume = lake.close, lake.volume
-    full = build_features(close, volume, cfg.features, lake.benchmark)
+    if cfg.mode == "daytrade":
+        open_ = lake.open.reindex_like(close)
+        full = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
+    else:
+        full = build_features(close, volume, cfg.features, lake.benchmark)
     warmup = warmup_days(cfg.features)
 
     rng = np.random.default_rng(0)
@@ -54,7 +58,12 @@ def check_lookahead_recompute(cfg: Config, lake: Lake, n_dates: int | None = Non
     for idx in sorted(sample):
         when = close.index[idx]
         view = lake.as_of(when)
-        truncated = build_features(view.close, view.volume, cfg.features, lake.benchmark)
+        if cfg.mode == "daytrade":
+            truncated = build_daytrade_features(
+                view.close, view.volume, view.open, cfg.features, lake.benchmark
+            )
+        else:
+            truncated = build_features(view.close, view.volume, cfg.features, lake.benchmark)
         diff = np.abs(truncated.values[-1] - full.values[idx])
         worst = max(worst, float(np.nanmax(diff)))
 
@@ -105,7 +114,12 @@ def feature_future_correlations(close: pd.DataFrame, panel: FeaturePanel) -> dic
 
 
 def check_future_correlation(cfg: Config, lake: Lake) -> dict:
-    panel = build_features(lake.close, lake.volume, cfg.features, lake.benchmark)
+    if cfg.mode == "daytrade":
+        panel = build_daytrade_features(
+            lake.close, lake.volume, lake.open.reindex_like(lake.close), cfg.features, lake.benchmark
+        )
+    else:
+        panel = build_features(lake.close, lake.volume, cfg.features, lake.benchmark)
     corrs = feature_future_correlations(lake.close, panel)
     threshold = cfg.referee.cheat_corr_threshold
     offenders = {k: round(v, 3) for k, v in corrs.items() if v > threshold}
@@ -213,6 +227,50 @@ def check_reality_gate(cfg: Config) -> dict:
             "details": {"error": "no training records found — run train first"},
             "plain_english": "No exam results logged yet.",
         }
+
+    if cfg.mode == "daytrade":
+        # Daytrade goal (per you): consistently *positive* on never-seen exams,
+        # without cheating — not "beat SPY every single window."
+        rows = []
+        green = 0
+        for r in records:
+            ret = r["out_of_sample"]["total_return"]
+            sh = r["out_of_sample"]["sharpe"]
+            is_green = ret > 0 and sh > 0
+            green += int(is_green)
+            rows.append(
+                {
+                    "fold": r["fold"],
+                    "oos_return": round(ret, 4),
+                    "oos_sharpe": round(sh, 2),
+                    "green": is_green,
+                    "beats_benchmark": r["out_of_sample"]["sharpe"]
+                    >= r["benchmark_oos"]["sharpe"],
+                }
+            )
+        frac = green / len(records)
+        mean_ret = float(np.mean([r["out_of_sample"]["total_return"] for r in records]))
+        passed = frac >= 0.5 and mean_ret > 0
+        return {
+            "name": "reality_gate",
+            "passed": bool(passed),
+            "details": {
+                "folds": rows,
+                "green_fraction": round(frac, 2),
+                "mean_oos_return": round(mean_ret, 4),
+                "rule": ">=50% exam folds green (positive return & Sharpe) and mean OOS return > 0",
+            },
+            "plain_english": (
+                f"On exam (never-seen) data, the daytrader finished green in "
+                f"{green} of {len(records)} periods (mean exam return {mean_ret * 100:.1f}%). "
+                + (
+                    "Consistent enough to keep as a candidate — still simulated money."
+                    if passed
+                    else "Not yet consistently profitable across exam windows."
+                )
+            ),
+        }
+
     rows = []
     wins = 0
     for r in records:
@@ -237,8 +295,11 @@ def check_reality_gate(cfg: Config) -> dict:
         "plain_english": (
             f"On exam (never-seen) data, the agent matched or beat buy-and-hold in "
             f"{wins} of {len(records)} periods. "
-            + ("Good enough to keep researching." if passed
-               else "It loses to simply buying the index most of the time — the current brain isn't earning its complexity.")
+            + (
+                "Good enough to keep researching."
+                if passed
+                else "It loses to simply buying the index most of the time — the current brain isn't earning its complexity."
+            )
         ),
     }
 

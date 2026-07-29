@@ -41,7 +41,12 @@ def load_champion_meta(cfg: Config) -> dict:
 def load_champion_model(cfg: Config):
     meta = load_champion_meta(cfg)
     path = meta["model_path"]
-    if meta.get("learner") == "supervised" or str(path).endswith(".joblib"):
+    learner = meta.get("learner", "")
+    if "ensemble" in learner or str(path).endswith("ensemble.joblib"):
+        from src.train.daytrade_supervised import DaytradeEnsembleAdapter
+
+        return DaytradeEnsembleAdapter.load(path), meta
+    if learner.startswith("supervised") or str(path).endswith(".joblib"):
         from src.train.daytrade_supervised import DaytradeRankerAdapter
 
         return DaytradeRankerAdapter.load(path), meta

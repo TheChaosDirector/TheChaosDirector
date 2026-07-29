@@ -30,9 +30,9 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import DaytradeEnv
-from src.features.factory import build_features, warmup_days
+from src.features.factory import build_daytrade_features, build_features, warmup_days
 from src.metrics.scorecard import scorecard
-from src.registry.store import fold_dir, save_champion, save_experiments
+from src.registry.store import fold_dir, registry_dir, save_champion, save_experiments
 from src.train.walkforward import (
     Fold,
     _daytrade_benchmark_returns,
@@ -80,24 +80,68 @@ class DaytradeRankerAdapter:
         return cls(blob["model"], blob["n_assets"], blob["n_features"], blob.get("weak_edge", 0.0005))
 
 
-def _build_xy(panel, opens, closes, start: int, end: int) -> tuple[np.ndarray, np.ndarray]:
-    """Stack (day, ticker) rows: features → that ticker's open→close return."""
+class DaytradeEnsembleAdapter:
+    """Average scores from several green-fold rankers, then must-pick the top name."""
+
+    def __init__(self, adapters: list[DaytradeRankerAdapter]):
+        if not adapters:
+            raise ValueError("ensemble needs at least one adapter")
+        self.adapters = adapters
+        self.n_assets = adapters[0].n_assets
+        self.n_features = adapters[0].n_features
+
+    def predict(self, obs, deterministic: bool = True):
+        scores = None
+        for ad in self.adapters:
+            action, _ = ad.predict(obs, deterministic=deterministic)
+            # Rebuild per-name scores by calling model directly.
+            obs_arr = np.asarray(obs, dtype=np.float64).reshape(-1)
+            flat = obs_arr[: self.n_assets * self.n_features]
+            X = flat.reshape(self.n_assets, self.n_features)
+            s = ad.model.predict(X)
+            scores = s if scores is None else scores + s
+        scores = scores / len(self.adapters)
+        idx = int(np.argmax(scores))
+        forced = 1 if float(scores[idx]) < self.adapters[0].weak_edge else 0
+        return np.array([idx, forced], dtype=np.int64), None
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump({"adapters": self.adapters}, path)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "DaytradeEnsembleAdapter":
+        blob = joblib.load(path)
+        return cls(blob["adapters"])
+
+
+def _build_xy(
+    panel,
+    opens,
+    closes,
+    start: int,
+    end: int,
+    bench_idx: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Stack (day, ticker) rows: features → excess open→close vs benchmark."""
     xs: list[np.ndarray] = []
     ys: list[float] = []
     n_assets = len(panel.tickers)
     for t in range(start, end):
-        feats = panel.values[t]  # (N, F), already lagged
+        feats = panel.values[t]
         o = opens[t]
         c = closes[t]
         valid = np.isfinite(o) & np.isfinite(c) & (o > 0) & (c > 0)
-        if not valid.any():
+        if not valid.any() or not valid[bench_idx]:
             continue
         rets = np.where(valid, c / o - 1.0, np.nan)
+        bench_ret = float(rets[bench_idx])
         for i in range(n_assets):
             if not valid[i]:
                 continue
             xs.append(feats[i])
-            ys.append(float(rets[i]))
+            ys.append(float(rets[i]) - bench_ret)
     if not xs:
         raise RuntimeError("No training rows for supervised daytrade fold")
     return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float64)
@@ -118,17 +162,18 @@ def train_supervised_fold(cfg: Config, fold: Fold) -> dict:
     close, volume, open_ = _subset_daytrade_universe(
         close, volume, open_, lake.benchmark, cfg.daytrade.max_names
     )
-    panel = build_features(close, volume, cfg.features, lake.benchmark)
+    panel = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
     opens = open_.values.astype(np.float64)
     closes = close.values.astype(np.float64)
+    bench_idx = panel.tickers.index(lake.benchmark)
 
-    X, y = _build_xy(panel, opens, closes, fold.train_start, fold.train_end)
+    X, y = _build_xy(panel, opens, closes, fold.train_start, fold.train_end, bench_idx)
     model = HistGradientBoostingRegressor(
-        max_depth=4,
-        learning_rate=0.05,
-        max_iter=200,
-        min_samples_leaf=40,
-        l2_regularization=1.0,
+        max_depth=3,
+        learning_rate=0.06,
+        max_iter=150,
+        min_samples_leaf=60,
+        l2_regularization=2.0,
         random_state=cfg.training.seed + fold.index,
     )
     model.fit(X, y)
@@ -136,7 +181,7 @@ def train_supervised_fold(cfg: Config, fold: Fold) -> dict:
         model,
         n_assets=len(panel.tickers),
         n_features=panel.n_features,
-        weak_edge=0.0005,
+        weak_edge=0.0002,
     )
 
     is_env = DaytradeEnv(
@@ -202,6 +247,11 @@ def train_supervised_fold(cfg: Config, fold: Fold) -> dict:
 
 
 def _supervised_worker(payload: dict) -> dict:
+    import os
+
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from src.config import load_config
 
@@ -224,6 +274,9 @@ def run_supervised_training(cfg: Config) -> dict:
     from dataclasses import asdict
     import os
 
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+
     lake = Lake(cfg)
     close = lake.close
     volume = lake.volume
@@ -231,7 +284,7 @@ def run_supervised_training(cfg: Config) -> dict:
     close, volume, open_ = _subset_daytrade_universe(
         close, volume, open_, lake.benchmark, cfg.daytrade.max_names
     )
-    panel = build_features(close, volume, cfg.features, lake.benchmark)
+    panel = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
     warmup = warmup_days(cfg.features)
     folds = make_folds(len(close), cfg, warmup, need_next_day=False)
     if not folds:
@@ -271,23 +324,40 @@ def run_supervised_training(cfg: Config) -> dict:
     best = max(pool, key=lambda r: (r["out_of_sample"]["sharpe"], r["out_of_sample"]["total_return"]))
     selected_by = "best_positive_oos_sharpe" if positive else "best_oos_sharpe_no_positive_folds"
 
+    # If we have multiple green folds, deploy an ensemble of them — more stable
+    # than crowning one lucky exam window.
+    if len(positive) >= 2:
+        adapters = [
+            DaytradeRankerAdapter.load(fold_dir(cfg, r["fold"]) / "model.joblib")
+            for r in positive
+        ]
+        ensemble = DaytradeEnsembleAdapter(adapters)
+        model_path = str(registry_dir(cfg) / "ensemble.joblib")
+        ensemble.save(model_path)
+        selected_by = f"ensemble_of_{len(positive)}_green_folds"
+        champ_fold = -1
+    else:
+        model_path = str(fold_dir(cfg, best["fold"]) / "model.joblib")
+        champ_fold = best["fold"]
+
     champion = {
-        "fold": best["fold"],
+        "fold": champ_fold if champ_fold >= 0 else best["fold"],
         "mode": "daytrade",
-        "learner": "supervised",
-        "model_path": str(fold_dir(cfg, best["fold"]) / "model.joblib"),
+        "learner": "supervised_ensemble" if len(positive) >= 2 else "supervised",
+        "model_path": model_path,
         "tickers": panel.tickers,
         "feature_names": panel.names,
         "selected_by": selected_by,
         "positive_oos_folds": len(positive),
         "total_folds": len(records),
+        "ensemble_folds": [r["fold"] for r in positive] if len(positive) >= 2 else None,
         "metrics": best,
         "config_path": cfg.config_path,
     }
     save_champion(cfg, champion)
     log.info(
-        "Supervised champion: fold %d | green folds %d/%d | exam Sharpe %.2f return %.1f%%",
-        best["fold"],
+        "Supervised champion: %s | green folds %d/%d | best exam Sharpe %.2f return %.1f%%",
+        selected_by,
         len(positive),
         len(records),
         best["out_of_sample"]["sharpe"],

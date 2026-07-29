@@ -14,7 +14,7 @@ from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import DaytradeEnv
 from src.env.portfolio_env import PortfolioEnv
-from src.features.factory import build_features, warmup_days
+from src.features.factory import build_daytrade_features, build_features, warmup_days
 from src.metrics.scorecard import plain_english, scorecard
 from src.registry.store import load_champion_model
 from src.train.walkforward import _subset_daytrade_universe, rollout
@@ -37,10 +37,10 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
         close, volume, open_ = _subset_daytrade_universe(
             close, volume, open_, lake.benchmark, cfg.daytrade.max_names
         )
+        panel = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
     else:
         open_ = None
-
-    panel = build_features(close, volume, cfg.features, lake.benchmark)
+        panel = build_features(close, volume, cfg.features, lake.benchmark)
 
     model, meta = load_champion_model(cfg)
     if meta["tickers"] != panel.tickers:

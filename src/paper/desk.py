@@ -18,7 +18,7 @@ from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import resolve_pick
 from src.env.portfolio_env import action_to_weights
-from src.features.factory import build_features
+from src.features.factory import build_daytrade_features, build_features
 from src.metrics.scorecard import plain_english, scorecard
 from src.registry.store import load_champion_model, load_experiments
 from src.train.walkforward import _subset_daytrade_universe
@@ -158,7 +158,10 @@ def _advance_daytrade(cfg: Config, lake: Lake, model, meta: dict, state: dict, d
 
         view_close = close.loc[:today]
         view_volume = volume.loc[:today]
-        panel = build_features(view_close, view_volume, cfg.features, lake.benchmark)
+        view_open = open_.loc[:today]
+        panel = build_daytrade_features(
+            view_close, view_volume, view_open, cfg.features, lake.benchmark
+        )
         obs_features = panel.values[-1].reshape(-1)
         drawdown = 0.0
         if state["cash_start"] > 0:

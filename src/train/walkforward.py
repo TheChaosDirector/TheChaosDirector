@@ -29,7 +29,7 @@ from src.config import Config, load_config
 from src.data.lake import Lake
 from src.env.daytrade_env import DaytradeEnv
 from src.env.portfolio_env import PortfolioEnv
-from src.features.factory import build_features, warmup_days
+from src.features.factory import build_daytrade_features, build_features, warmup_days
 from src.metrics.scorecard import scorecard
 from src.registry.store import fold_dir, save_champion, save_experiments, save_fold
 
@@ -175,7 +175,7 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         close, volume, open_ = _subset_daytrade_universe(
             close, volume, open_, lake.benchmark, cfg.daytrade.max_names
         )
-        panel = build_features(close, volume, cfg.features, lake.benchmark)
+        panel = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
         train_env = Monitor(
             _make_daytrade_env(
                 open_, close, panel, cfg, fold.train_start, fold.train_end, randomize_episodes=True
@@ -293,10 +293,12 @@ def run_training(cfg: Config) -> dict:
     volume = lake.volume
     if cfg.mode == "daytrade":
         open_ = lake.open.reindex_like(close)
-        close, volume, _ = _subset_daytrade_universe(
+        close, volume, open_ = _subset_daytrade_universe(
             close, volume, open_, lake.benchmark, cfg.daytrade.max_names
         )
-    panel = build_features(close, volume, cfg.features, lake.benchmark)
+        panel = build_daytrade_features(close, volume, open_, cfg.features, lake.benchmark)
+    else:
+        panel = build_features(close, volume, cfg.features, lake.benchmark)
     warmup = warmup_days(cfg.features)
     need_next_day = cfg.mode != "daytrade"
 

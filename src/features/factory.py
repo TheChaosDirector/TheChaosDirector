@@ -126,3 +126,21 @@ def warmup_days(fcfg: FeaturesCfg) -> int:
         max(fcfg.ma_windows),
         fcfg.regime_ma,
     ) + 1
+
+
+def build_daytrade_features(
+    close: pd.DataFrame,
+    volume: pd.DataFrame,
+    open_: pd.DataFrame,
+    fcfg: FeaturesCfg,
+    benchmark: str,
+    extra_unlagged: dict[str, pd.DataFrame] | None = None,
+) -> FeaturePanel:
+    """Daytrade features = the same lagged overnight clues as portfolio mode.
+
+    ``open_`` is accepted for API symmetry (execution uses opens) but is not
+    mixed into features here — today's open can look "cheaty" against
+    close-to-close diagnostics even when used fairly for open→close trading.
+    """
+    del open_  # execution-only; features stay strictly prior-close lagged
+    return build_features(close, volume, fcfg, benchmark, extra_unlagged=extra_unlagged)
