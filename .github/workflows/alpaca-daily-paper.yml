@@ -94,12 +94,15 @@ jobs:
           fi
 
           python -m src.cli alpaca-rebalance "${ARGS[@]}"
+          python -m src.cli decisions-label --config configs/default.yaml --mode portfolio || true
 
       - name: Upload plan/execution journal
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: alpaca-paper-${{ github.run_id }}
-          path: artifacts/portfolio/alpaca_paper/
+          path: |
+            artifacts/portfolio/alpaca_paper/
+            experience/portfolio/
           if-no-files-found: ignore
           retention-days: 30
