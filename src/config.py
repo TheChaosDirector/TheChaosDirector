@@ -81,6 +81,15 @@ class DaytradeCfg:
 
 
 @dataclass
+class ConcentratedCfg:
+    # Keep at most this many names after softmax (rest forced to cash).
+    max_names: int = 6
+    # Reward mix: lean on beating the benchmark, keep a little absolute-return signal.
+    excess_reward_weight: float = 1.0
+    absolute_reward_weight: float = 0.25
+
+
+@dataclass
 class AlpacaCfg:
     # Practice-money daily rebalance settings. Live trading is intentionally unsupported here.
     min_notional: float = 25.0  # ignore weight drifts smaller than this many dollars
@@ -98,7 +107,7 @@ class RefereeCfg:
     cheat_corr_threshold: float = 0.30
 
 
-VALID_MODES = ("portfolio", "daytrade")
+VALID_MODES = ("portfolio", "daytrade", "concentrated")
 
 
 @dataclass
@@ -112,6 +121,7 @@ class Config:
     risk: RiskCfg = field(default_factory=RiskCfg)
     training: TrainingCfg = field(default_factory=TrainingCfg)
     daytrade: DaytradeCfg = field(default_factory=DaytradeCfg)
+    concentrated: ConcentratedCfg = field(default_factory=ConcentratedCfg)
     paper: PaperCfg = field(default_factory=PaperCfg)
     referee: RefereeCfg = field(default_factory=RefereeCfg)
     alpaca: AlpacaCfg = field(default_factory=AlpacaCfg)
@@ -127,7 +137,7 @@ class Config:
 
     @property
     def artifacts_dir(self) -> Path:
-        # Mode-scoped so portfolio and daytrade champions never overwrite each other.
+        # Mode-scoped so portfolio / daytrade / concentrated champions never overwrite each other.
         return Path(self.paths.artifacts_dir) / self.mode
 
 
@@ -140,6 +150,7 @@ _SECTIONS = {
     "risk": RiskCfg,
     "training": TrainingCfg,
     "daytrade": DaytradeCfg,
+    "concentrated": ConcentratedCfg,
     "paper": PaperCfg,
     "referee": RefereeCfg,
     "alpaca": AlpacaCfg,
