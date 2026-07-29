@@ -10,7 +10,8 @@ venv/
 !.env.example
 
 # Data lake and run artifacts are local-only (can be rebuilt with the CLI)
-data/
+# Anchor to repo root so src/data/ (Python package) is not ignored.
+/data/
 artifacts/
 *.zip
 
