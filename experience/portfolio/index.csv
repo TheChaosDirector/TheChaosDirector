@@ -1,2 +1,2 @@
 as_of,source,executed,equity,n_targets,cash_weight,n_orders,top,labeled,horizon_days,portfolio_return,benchmark_return,excess_return
-2026-07-28,alpaca_paper,True,100000.0,273,0.0035284857804493974,273,PINS:1.2%; ZS:1.2%; PNC:1.0%; MPC:0.9%; ROKU:0.8%,False,,,,
+2026-07-28,alpaca_paper,True,99897.82,273,0.0035284857718368423,42,PINS:1.2%; ZS:1.2%; PNC:1.0%; MPC:0.9%; ROKU:0.8%,False,,,,
