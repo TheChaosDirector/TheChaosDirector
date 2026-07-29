@@ -5,6 +5,7 @@ Usage:
     python -m src.cli train|backtest|paper|referee ...
     python -m src.cli alpaca-status
     python -m src.cli alpaca-rebalance [--execute] [--force] [--no-refresh]
+    python -m src.cli decisions-status|decisions-label|decisions-export
 """
 
 from __future__ import annotations
@@ -102,10 +103,33 @@ def main() -> None:
         help="Ignore drifts smaller than this many dollars (default from config)",
     )
 
+    add("decisions-status", "How many saved live/paper choices we have (training diary)")
+    p_lab = add(
+        "decisions-label",
+        "Grade saved choices with what the market did next (fills training outcomes)",
+    )
+    p_lab.add_argument(
+        "--horizon-days",
+        type=int,
+        default=1,
+        help="How many market days after the choice to measure return (default 1)",
+    )
+    p_exp = add(
+        "decisions-export",
+        "Write a parquet table of saved choices for future training",
+    )
+    p_exp.add_argument(
+        "--all",
+        action="store_true",
+        help="Include unlabeled choices too (default: labeled/graded only)",
+    )
+
     args = parser.parse_args()
     mode = getattr(args, "mode", None)
-    # Alpaca commands default to portfolio mode.
+    # Alpaca / decisions commands default to portfolio mode.
     if args.command.startswith("alpaca") and mode is None:
+        mode = "portfolio"
+    if args.command.startswith("decisions") and mode is None:
         mode = "portfolio"
     cfg = load_config(args.config, mode=mode)
 
@@ -165,11 +189,31 @@ def main() -> None:
         print(json.dumps(report, indent=2))
         if report.get("skipped"):
             print("\nSkipped: US market is closed (automation-friendly exit).")
-        elif not args.execute:
+        elif report.get("decision_log"):
+            print(f"\nChoice saved for later training: {report['decision_log']}")
+        if not args.execute and not report.get("skipped"):
             print(
                 "\nDry-run complete. To send these orders to Alpaca PAPER, add --execute "
                 "(and --force if the market is closed)."
             )
+    elif args.command == "decisions-status":
+        from src.experience.decisions import status as decisions_status
+
+        report = decisions_status(cfg)
+        print(json.dumps(report, indent=2))
+        print("\n" + report["plain_english"])
+    elif args.command == "decisions-label":
+        from src.experience.decisions import label_outcomes
+
+        report = label_outcomes(cfg, horizon_days=int(args.horizon_days))
+        print(json.dumps(report, indent=2))
+        print("\n" + report["plain_english"])
+    elif args.command == "decisions-export":
+        from src.experience.decisions import export_training_table
+
+        path = export_training_table(cfg, labeled_only=not bool(args.all))
+        print(json.dumps({"path": str(path)}, indent=2))
+        print(f"\nTraining table written to {path}")
 
 
 if __name__ == "__main__":

@@ -13,3 +13,10 @@ venv/
 data/
 artifacts/
 *.zip
+
+# Daily choice diary IS meant to be committed (future training data).
+# Keep the folder even before the first live day.
+!experience/
+!experience/**
+experience/**/*.parquet
+experience/**/*.tmp

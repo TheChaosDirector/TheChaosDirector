@@ -30,6 +30,7 @@ from src.config import Config
 from src.data.download import run_download
 from src.data.lake import Lake
 from src.env.portfolio_env import action_to_weights
+from src.experience.decisions import append_decision, build_decision_record
 from src.features.factory import build_features
 from src.registry.store import load_champion_model
 
@@ -62,8 +63,11 @@ def to_yahoo_symbol(alpaca_symbol: str) -> str:
     return alpaca_symbol.replace(".", "-")
 
 
-def _latest_targets(cfg: Config) -> tuple[dict[str, float], dict]:
-    """Ask the frozen champion for target weights using the latest lake bar."""
+def _latest_targets(cfg: Config) -> tuple[dict[str, float], dict, dict]:
+    """Ask the frozen champion for target weights using the latest lake bar.
+
+    Returns targets, info, and a decision_ctx blob (obs/action/weights) for the experience log.
+    """
     lake = Lake(cfg)
     model, meta = load_champion_model(cfg)
     tickers = list(meta["tickers"])
@@ -78,6 +82,7 @@ def _latest_targets(cfg: Config) -> tuple[dict[str, float], dict]:
     prev = np.zeros(len(tickers))
     obs = np.concatenate([obs_features, prev, [1.0], [0.0]]).astype(np.float32)
     action, _ = model.predict(obs, deterministic=True)
+    action = np.asarray(action, dtype=np.float32).reshape(-1)
 
     last_prices = close.iloc[-1].values.astype(float)
     valid = np.isfinite(last_prices).astype(float)
@@ -91,7 +96,13 @@ def _latest_targets(cfg: Config) -> tuple[dict[str, float], dict]:
         "cash_weight": float(1.0 - sum(targets.values())),
         "top": sorted(targets.items(), key=lambda kv: -kv[1])[:10],
     }
-    return targets, info
+    decision_ctx = {
+        "tickers": tickers,
+        "obs": obs,
+        "action": action,
+        "weights": np.asarray(weights, dtype=np.float32),
+    }
+    return targets, info, decision_ctx
 
 
 def _current_weights(positions: dict[str, dict], equity: float) -> dict[str, float]:
@@ -209,7 +220,7 @@ def rebalance(
 
     acct = client.account()
     positions = client.positions()
-    targets, target_info = _latest_targets(cfg)
+    targets, target_info, decision_ctx = _latest_targets(cfg)
     current = _current_weights(positions, acct.equity)
     orders = plan_rebalance(targets, current, acct.equity, min_notional)
 
@@ -225,17 +236,43 @@ def rebalance(
         "orders": orders,
         "submitted": [],
         "errors": [],
+        "decision_log": None,
     }
 
     out = alpaca_dir(cfg)
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    (out / f"plan_{stamp}.json").write_text(json.dumps(report, indent=2))
-    (out / "latest_plan.json").write_text(json.dumps(report, indent=2))
+
+    def _save_experience(executed: bool) -> str:
+        rec = build_decision_record(
+            cfg=cfg,
+            as_of=target_info["as_of"],
+            tickers=decision_ctx["tickers"],
+            obs=decision_ctx["obs"],
+            action=decision_ctx["action"],
+            weights=decision_ctx["weights"],
+            targets=targets,
+            current_weights=current,
+            equity=acct.equity,
+            cash=acct.cash,
+            orders=orders,
+            executed=executed,
+            source="alpaca_paper",
+            extra={"market_open": bool(clock.get("is_open"))},
+        )
+        path = append_decision(cfg, rec)
+        report["decision_log"] = str(path)
+        return str(path)
+
+    def _write_plan() -> None:
+        (out / f"plan_{stamp}.json").write_text(json.dumps(report, indent=2))
+        (out / "latest_plan.json").write_text(json.dumps(report, indent=2))
 
     if not execute:
+        _save_experience(executed=False)
+        _write_plan()
         log.info(
-            "Dry-run only: %d paper orders planned (pass --execute to send them).",
+            "Dry-run only: %d paper orders planned (pass --execute to send them). Choice saved to experience log.",
             len(orders),
         )
         return report
@@ -261,6 +298,8 @@ def rebalance(
 
     report["submitted"] = submitted
     report["errors"] = errors
+    _save_experience(executed=True)
+    _write_plan()
     (out / f"execution_{stamp}.json").write_text(json.dumps(report, indent=2))
     (out / "latest_execution.json").write_text(json.dumps(report, indent=2))
 
@@ -276,7 +315,7 @@ def rebalance(
     }
     pd.DataFrame([row]).to_csv(journal, mode="a", header=not journal.exists(), index=False)
     log.info(
-        "Submitted %d/%d Alpaca paper orders (%d errors).",
+        "Submitted %d/%d Alpaca paper orders (%d errors). Choice saved to experience log.",
         len(submitted),
         len(orders),
         len(errors),

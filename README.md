@@ -89,9 +89,36 @@ chmod +x scripts/pack-champion.sh
 
 ### C) Cursor Automation
 
-In [Cursor Automations](https://cursor.com/automations), create a weekday schedule whose prompt is basically: “In this repo, run the Alpaca PAPER daily rebalance (`python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute --skip-if-closed`) and summarize what traded.” Put paper API keys in the Cloud Agent **environment secrets**, and make sure that environment has (or can download) the champion bundle — same idea as the GitHub release above. Cursor Automations are great when you want a human-readable daily note; GitHub Actions is simpler for “just place the paper orders.”
+In [Cursor Automations](https://cursor.com/automations), create a weekday schedule, attach this repo, and use a prompt like:
 
-Plans/executions land in `artifacts/portfolio/alpaca_paper/`.
+1. Download the `portfolio-champion` release + install deps  
+2. Run: `python -m src.cli alpaca-rebalance --config configs/default.yaml --mode portfolio --execute --skip-if-closed`  
+3. Run: `python -m src.cli decisions-label --config configs/default.yaml --mode portfolio`  
+4. **Commit and push** any new files under `experience/portfolio/` (the choice diary) so they aren’t lost when the cloud VM disappears  
+5. Summarize what traded — do not open a PR unless something failed and needs a code fix  
+
+Put paper API keys in Cloud Agent **Runtime Secrets**.
+
+Plans/executions also land in `artifacts/portfolio/alpaca_paper/` (local/ephemeral). The durable training diary is `experience/portfolio/decisions.jsonl`.
+
+## Choice diary → future training data
+
+Every Alpaca rebalance (dry-run or execute) appends that day’s choice to:
+
+```text
+experience/portfolio/decisions.jsonl   # what it saw + what it picked
+experience/portfolio/index.csv         # spreadsheet-friendly summary
+```
+
+Later, grade those choices with real next-day returns, then export a training table:
+
+```bash
+python -m src.cli decisions-status --config configs/default.yaml --mode portfolio
+python -m src.cli decisions-label  --config configs/default.yaml --mode portfolio
+python -m src.cli decisions-export --config configs/default.yaml --mode portfolio
+```
+
+That doesn’t retrain by itself yet — it builds the homework pile. When enough graded days exist, a future training run can study them.
 
 ## Quickstart — portfolio smoke (~minutes with parallel folds)
 
