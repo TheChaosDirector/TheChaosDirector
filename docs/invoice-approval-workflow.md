@@ -1,10 +1,10 @@
 # Vendor Invoice Approval Workflow
 
-Plain-English process for finance intake → approval (or rejection) → Mercury payment.
+Plain-English process for finance intake → approval (or rejection) → Mercury payment → archive review.
 
 **People involved**
-- **Automation (Zapier):** filing, emails, status updates, Mercury forward
-- **Stacey:** compliance check + final Pay in Mercury (and handling rejects)
+- **Automation (Zapier):** filing, emails, status updates, Mercury forward, reminders
+- **Stacey:** compliance check + final Pay in Mercury (and handling rejects) + archive review
 - **Head of School:** Approve or Reject
 
 ---
@@ -25,7 +25,82 @@ Plain-English process for finance intake → approval (or rejection) → Mercury
 
 ---
 
-## One diagram (approve, reject, and no reply)
+## Full flow diagram
+
+```text
+                         [ INVOICE SENT TO FINANCE EMAIL ]
+                                          │
+                                          ▼
+                               [ ZAPIER SMART CHECK ]
+                                          │
+              ┌───────────────────────────┴───────────────────────────┐
+              ▼                                                       ▼
+   [ NEW VENDOR / MISSING TAX ]                          [ KNOWN VENDOR W/ W-9 ]
+              │                                                       │
+              ▼                                                       │
+   Auto-Reply: W-9 / Typeform Link                                    │
+              │                                                       │
+              ▼                                                       │
+   Sheet Status: "2 - Waiting on Docs"                                │
+              │                                                       │
+              ▼                                                       │
+   Vendor Submits Tax Docs via Form                                   │
+              │                                                       │
+              └───────────────────────────┬───────────────────────────┘
+                                          │
+                                          ▼
+                            [ AI DATA EXTRACTION PARSER ]
+                 Extracts Vendor Name, Invoice #, Amount, & Due Date
+                                          │
+                                          ▼
+                          [ GOOGLE DRIVE + GOOGLE SHEETS ]
+               Saves PDF to Drive ──> Creates Row in Master Tracker
+                                          │
+                                          ▼
+                         [ STACEY'S COMPLIANCE REVIEW ]
+               Verifies Contract/Data ──> Updates Status: "3 - Ready"
+                                          │
+                                          ▼
+                    [ AUTOMATED HEAD OF SCHOOL EMAIL ]
+              Contains PDF Link + "APPROVE" Button + "REJECT" Button
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    ▼                     ▼                     ▼
+           [ HEAD CLICKS           [ HEAD CLICKS        [ NO REPLY AFTER
+             APPROVE ]               REJECT ]            ~3 BUSINESS DAYS ]
+                    │                     │                     │
+                    ▼                     ▼                     ▼
+        Status: "4 - Approved"   Status: "6 - Rejected"   Status: "7 - On Hold"
+           (+ timestamp)          (+ timestamp/reason)     Reminder to Head
+                    │                     │                 + notify Stacey
+                    ▼                     ▼                     │
+   [ ZAPIER FORWARDS PDF TO      [ EMAIL STACEY ]               │
+      MERCURY BILL PAY INBOX ]    Do NOT send to Mercury         │
+                    │                     │                     │
+                    ▼                     ▼                     │
+        [ MERCURY CREATES           Can it be fixed?             │
+           DRAFT BILL ]                   │                     │
+                    │           ┌─────────┴─────────┐           │
+                    ▼           ▼                   ▼           │
+   [ STACEY REVIEWS & PAYS   YES: Stacey fixes   NO: Close as   │
+          IN MERCURY ]       → set "3 - Ready"   do-not-pay /   │
+                    │        → re-send approval  Rejected       │
+                    ▼              email                 archive │
+   [ MERCURY PAYMENT SETTLES ]         │                        │
+                    │                  └──────────►─────────────┘
+                    ▼                           (loops back to
+   Status: "5 - Paid" + Date Paid            Head email if Ready)
+                    │
+                    ▼
+          [ AUTO-ARCHIVE + WEEKLY DIGEST ]
+     Row moves to Archive ──> Friday Summary Email
+                    │
+                    ▼
+     [ MONTHLY / BI-MONTHLY ARCHIVE REVIEW ]
+   Zapier reminds Stacey to check Archive tab
+   Spot-check paid invoices, reject closes,
+   and anything that looks off ──> note / escalate
+```
 
 ```mermaid
 flowchart TD
@@ -52,12 +127,14 @@ flowchart TD
   O --> P[Mercury payment settles]
   P --> Q[Status: 5 - Paid<br/>Date Paid logged]
   Q --> R[Archive row<br/>Include in Friday summary]
+  R --> Y[Monthly / bi-monthly archive review<br/>Stacey spot-checks Archive tab]
 
   K -->|Reject| S[Status: 6 - Rejected<br/>+ timestamp + reason]
   S --> T[Email Stacey — do not send to Mercury]
   T --> U{Can it be fixed?}
   U -->|Yes| H
   U -->|No| V[Close / Rejected archive]
+  V --> Y
 
   K -->|No reply in 3 business days| W[Status: 7 - On Hold]
   W --> X[Remind Head + notify Stacey]
@@ -66,7 +143,7 @@ flowchart TD
 
 ---
 
-## Who does what (including not approved)
+## Who does what (including not approved + archive review)
 
 ```text
 INVOICE EMAIL
@@ -123,7 +200,16 @@ INVOICE EMAIL
 │ Marks Paid      │
 │ Archives row    │
 │ Friday summary  │
-└─────────────────┘
+└────────┬────────┘
+         │
+         ▼
+┌──────────────────────────────────────┐
+│ STACEY — MONTHLY / BI-MONTHLY        │
+│ Archive review (Zapier reminder)     │
+│ • Spot-check paid invoices           │
+│ • Review rejected / closed items     │
+│ • Flag anything that looks wrong     │
+└──────────────────────────────────────┘
 
 If Head never clicks either button:
   Automation → Status 7 - On Hold → reminder to Head + notify Stacey
@@ -148,6 +234,22 @@ If Head never clicks either button:
 
 ---
 
+## Monthly / bi-monthly archive review
+
+After invoices are paid (or closed as rejected), they sit in the Archive tab. On a **monthly or bi-monthly** cadence:
+
+1. Zapier sends Stacey a reminder email with a link to the Archive tab.
+2. Stacey spot-checks recent archived rows:
+   - Paid amounts look right
+   - Vendor / invoice # matches
+   - Rejected closes make sense
+   - Nothing stuck that should have been paid
+3. If something looks off → note it in the Sheet / escalate (vendor, Head, or Mercury).
+
+Suggested cadence: **1st of every month**, or **1st and 15th** for bi-monthly.
+
+---
+
 ## Suggested Sheet columns
 
 | Column | Purpose |
@@ -165,10 +267,11 @@ If Head never clicks either button:
 | K – Reject Reason | Optional note from reject link |
 | L – Date Paid | From Mercury settlement |
 | M – Row ID | Stable ID used in Approve/Reject links |
+| N – Last Archive Review | Date Stacey last reviewed this period (optional) |
 
 ---
 
-## Zapier build (separate Zaps, reject included)
+## Zapier build (separate Zaps)
 
 ### Zap 1 — Intake
 - **Trigger:** New email in finance inbox (PDF attachment)
@@ -220,6 +323,14 @@ If Head never clicks either button:
 - **Trigger:** Every Friday
 - Email summary of Paid / Rejected / On Hold / still Ready this week
 
+### Zap 9 — Monthly / bi-monthly archive review reminder
+- **Trigger:** Schedule (1st of month, or 1st + 15th)
+- Email Stacey: link to Archive tab + short checklist
+  - Spot-check paid invoices
+  - Review rejected / closed items
+  - Flag anything that looks wrong
+- Optional: log “Last Archive Review” date on the Sheet
+
 ---
 
 ## Bottom line for Stacey
@@ -234,3 +345,7 @@ If Head never clicks either button:
 
 **If the Head goes silent**
 - Row goes On Hold and you get a ping so it doesn’t disappear
+
+**Once a month (or twice a month)**
+- Open the Archive tab when the reminder hits
+- Quick spot-check that paid / rejected items look right
