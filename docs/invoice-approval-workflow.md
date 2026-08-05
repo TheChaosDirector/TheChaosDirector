@@ -8,11 +8,16 @@ Plain-English process for finance intake → approval (or rejection) → Mercury
 - **Head of School:** Approve or Reject
 
 **Build kit**
+- Docs index: [`README.md`](./README.md)
 - Stacey handout: [`invoice-workflow-for-stacey.md`](./invoice-workflow-for-stacey.md)
 - Zapier checklist: [`zapier-build-checklist.md`](./zapier-build-checklist.md)
+- Mercury setup: [`mercury-setup.md`](./mercury-setup.md)
 - Sheet headers: [`templates/master-tracker-headers.csv`](./templates/master-tracker-headers.csv)
 - Vendor directory: [`templates/vendor-directory-headers.csv`](./templates/vendor-directory-headers.csv)
+- Archive tab: [`templates/archive-tab-headers.csv`](./templates/archive-tab-headers.csv)
 - Email copy: [`templates/email-templates.md`](./templates/email-templates.md)
+- Approve/Reject HTML: [`templates/approval-email-html.md`](./templates/approval-email-html.md)
+- Typeform fields: [`templates/typeform-w9-fields.md`](./templates/typeform-w9-fields.md)
 
 ---
 

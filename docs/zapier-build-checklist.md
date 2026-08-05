@@ -5,12 +5,14 @@ Use this when standing up the live Zaps. Keep Zaps separate (one trigger → one
 **Prereqs**
 - [ ] Finance Gmail/Outlook inbox ready
 - [ ] Google Sheet created from `templates/master-tracker-headers.csv`
+- [ ] Archive tab from `templates/archive-tab-headers.csv`
 - [ ] Vendor Directory tab/sheet from `templates/vendor-directory-headers.csv`
 - [ ] Google Drive folder for invoice PDFs
-- [ ] Typeform (or Google Form) for W-9 / tax docs
-- [ ] Mercury Bill Pay inbox email address copied
+- [ ] Typeform (or Google Form) using `templates/typeform-w9-fields.md`
+- [ ] Mercury Bill Pay inbox email address copied (`mercury-setup.md`)
 - [ ] Head of School + Stacey email addresses confirmed
 - [ ] Zapier account connected to Gmail, Sheets, Drive, Mercury, Typeform
+- [ ] Approval email uses HTML buttons from `templates/approval-email-html.md`
 
 ---
 
