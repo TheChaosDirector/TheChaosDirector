@@ -6,12 +6,12 @@ Design + build kit for the finance invoice → approval → Mercury payment work
 
 | Audience | Open this |
 |---|---|
-| **Revised full-path plan (live Gmail + Drive)** | [`revised-full-path-plan.md`](./revised-full-path-plan.md) |
-| Working Sheet stopgap (Apps Script) | [`sheet-prototype-setup.md`](./sheet-prototype-setup.md) |
+| **Option 2 — Always-on Zaps (CURRENT)** | [`option2-always-on-zaps.md`](./option2-always-on-zaps.md) |
+| Live Sheet | [Invoice Approval Tracker](https://docs.google.com/spreadsheets/d/148VDOsPeqWq3XCQw39WlFhp-vN7ZlblFsQS_PuxWcgQ/edit) |
+| Revised path notes | [`revised-full-path-plan.md`](./revised-full-path-plan.md) |
 | Stacey (ops) | [`invoice-workflow-for-stacey.md`](./invoice-workflow-for-stacey.md) |
 | Shareable diagram | [`invoice-workflow-diagram.png`](./invoice-workflow-diagram.png) |
 | Full design | [`invoice-approval-workflow.md`](./invoice-approval-workflow.md) |
-| Zap build checklist | [`zapier-build-checklist.md`](./zapier-build-checklist.md) |
 | Mercury setup (when you have access) | [`mercury-setup.md`](./mercury-setup.md) |
 
 ## Templates
