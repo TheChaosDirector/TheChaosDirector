@@ -138,13 +138,13 @@ flowchart TD
   K -->|Reject| S[Status: 6 - Rejected<br/>+ timestamp + reason]
   S --> T[Email Stacey — do not send to Mercury]
   T --> U{Can it be fixed?}
-  U -->|Yes| H
-  U -->|No| V[Close / Rejected archive]
+  U -->|Yes — Stacey fixes and sets Ready again| H
+  U -->|No — close as do-not-pay| V[Close / Rejected archive]
   V --> Y
 
   K -->|No reply in 3 business days| W[Status: 7 - On Hold]
   W --> X[Remind Head + notify Stacey]
-  X --> J
+  X -->|Send approval email again| J
 ```
 
 ---
