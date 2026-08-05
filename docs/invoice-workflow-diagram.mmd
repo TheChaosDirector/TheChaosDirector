@@ -1,0 +1,36 @@
+flowchart TD
+  A[Invoice arrives in finance email] --> B{Vendor known<br/>and W-9 on file?}
+
+  B -->|No| C[Auto-reply: W-9 / Typeform link]
+  C --> D[Status: 2 - Waiting on Docs]
+  D --> E[Vendor submits tax docs]
+  E --> F[AI reads invoice PDF]
+
+  B -->|Yes| F
+
+  F --> G[Save PDF to Drive<br/>Create Master Tracker row]
+  G --> H[Stacey reviews row]
+  H --> I[Status: 3 - Ready]
+  I --> J[Email Head of School<br/>PDF + Approve + Reject]
+
+  J --> K{Head of School decision}
+
+  K -->|Approve| L[Status: 4 - Approved<br/>+ timestamp]
+  L --> M[Forward PDF to Mercury Bill Pay inbox]
+  M --> N[Mercury builds draft bill]
+  N --> O[Stacey reviews and clicks Pay]
+  O --> P[Mercury payment settles]
+  P --> Q[Status: 5 - Paid<br/>Date Paid logged]
+  Q --> R[Archive row<br/>Friday summary email]
+  R --> Y[Monthly / bi-monthly archive review<br/>Stacey spot-checks Archive tab]
+
+  K -->|Reject| S[Status: 6 - Rejected<br/>+ timestamp + reason]
+  S --> T[Email Stacey — do not send to Mercury]
+  T --> U{Can it be fixed?}
+  U -->|Yes| H
+  U -->|No| V[Close / Rejected archive]
+  V --> Y
+
+  K -->|No reply in 3 business days| W[Status: 7 - On Hold]
+  W --> X[Remind Head + notify Stacey]
+  X --> J
