@@ -1,8 +1,8 @@
 # Invoice Payment Flow — For Stacey
 
-**[Open the click-through demo](https://htmlpreview.github.io/?https://github.com/TheChaosDirector/TheChaosDirector/blob/cursor/invoice-workflow-reject-path-8a76/docs/demo/invoice-flow-prototype.html)** (email + Mercury are mocked)
+**Working prototype:** follow [`sheet-prototype-setup.md`](./sheet-prototype-setup.md) to run this on a real Google Sheet (email + Mercury are logged as mocks).
 
-Share this page or the image below.
+Share the diagram below too.
 
 ![Invoice approval workflow](./invoice-workflow-diagram.png)
 
