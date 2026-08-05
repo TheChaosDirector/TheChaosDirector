@@ -6,13 +6,13 @@ Design + build kit for the finance invoice → approval → Mercury payment work
 
 | Audience | Open this |
 |---|---|
-| **Working prototype (real Google Sheet)** | [`sheet-prototype-setup.md`](./sheet-prototype-setup.md) — email + Mercury mocked, statuses/Approve/Reject real |
+| **Revised full-path plan (live Gmail + Drive)** | [`revised-full-path-plan.md`](./revised-full-path-plan.md) |
+| Working Sheet stopgap (Apps Script) | [`sheet-prototype-setup.md`](./sheet-prototype-setup.md) |
 | Stacey (ops) | [`invoice-workflow-for-stacey.md`](./invoice-workflow-for-stacey.md) |
 | Shareable diagram | [`invoice-workflow-diagram.png`](./invoice-workflow-diagram.png) |
 | Full design | [`invoice-approval-workflow.md`](./invoice-approval-workflow.md) |
-| Build live Zaps later | [`zapier-build-checklist.md`](./zapier-build-checklist.md) |
+| Zap build checklist | [`zapier-build-checklist.md`](./zapier-build-checklist.md) |
 | Mercury setup (when you have access) | [`mercury-setup.md`](./mercury-setup.md) |
-| Old HTML click-demo (visual only) | [Open](https://htmlpreview.github.io/?https://github.com/TheChaosDirector/TheChaosDirector/blob/cursor/invoice-workflow-reject-path-8a76/docs/demo/invoice-flow-prototype.html) |
 
 ## Templates
 

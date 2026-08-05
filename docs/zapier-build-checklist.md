@@ -1,18 +1,24 @@
 # Zapier build checklist
 
+**Current target:** [`revised-full-path-plan.md`](./revised-full-path-plan.md)  
+Live Gmail + Drive + Sheets. Mercury still mocked via Mercury Log until Bill Pay is available.
+
 Use this when standing up the live Zaps. Keep Zaps separate (one trigger → one outcome).
 
 **Prereqs**
-- [ ] Finance Gmail/Outlook inbox ready
+- [ ] Finance Gmail inbox ready (connected in Zapier)
+- [ ] Google Drive folder `Invoices/Incoming` (connected in Zapier)
+- [ ] Google Sheets connected in Zapier
 - [ ] Google Sheet created from `templates/master-tracker-headers.csv`
 - [ ] Archive tab from `templates/archive-tab-headers.csv`
 - [ ] Vendor Directory tab/sheet from `templates/vendor-directory-headers.csv`
-- [ ] Google Drive folder for invoice PDFs
-- [ ] Typeform (or Google Form) using `templates/typeform-w9-fields.md`
-- [ ] Mercury Bill Pay inbox email address copied (`mercury-setup.md`)
+- [ ] Mercury Log tab (mock drafts/payments)
+- [ ] Typeform (or Google Form) using `templates/typeform-w9-fields.md` (optional at first)
 - [ ] Head of School + Stacey email addresses confirmed
-- [ ] Zapier account connected to Gmail, Sheets, Drive, Mercury, Typeform
+- [ ] Webhooks by Zapier Catch Hook for Approve/Reject
 - [ ] Approval email uses HTML buttons from `templates/approval-email-html.md`
+- [ ] ChatGPT / Zapier AI (or PDF parser) enabled for extraction
+- [ ] Mercury Bill Pay inbox — **later**; until then use Mercury Log mock
 
 ---
 
