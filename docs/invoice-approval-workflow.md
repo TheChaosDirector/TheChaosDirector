@@ -27,6 +27,12 @@ Plain-English process for finance intake → approval (or rejection) → Mercury
 
 ## Full flow diagram
 
+**Shareable image:** [PNG](./invoice-workflow-diagram.png) · [SVG](./invoice-workflow-diagram.svg)
+
+![Invoice approval workflow](./invoice-workflow-diagram.png)
+
+### Text version
+
 ```text
                          [ INVOICE SENT TO FINANCE EMAIL ]
                                           │
