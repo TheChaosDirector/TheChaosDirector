@@ -6,7 +6,7 @@ Design + build kit for the finance invoice → approval → Mercury payment work
 
 | Audience | Open this |
 |---|---|
-| **Click-through prototype (mocked email + Mercury)** | [`demo/invoice-flow-prototype.html`](./demo/invoice-flow-prototype.html) |
+| **Click-through prototype (mocked email + Mercury)** | **[Open demo in browser](https://htmlpreview.github.io/?https://github.com/TheChaosDirector/TheChaosDirector/blob/cursor/invoice-workflow-reject-path-8a76/docs/demo/invoice-flow-prototype.html)** · source: [`demo/invoice-flow-prototype.html`](./demo/invoice-flow-prototype.html) |
 | Stacey (ops) | [`invoice-workflow-for-stacey.md`](./invoice-workflow-for-stacey.md) |
 | Shareable diagram | [`invoice-workflow-diagram.png`](./invoice-workflow-diagram.png) |
 | Full design | [`invoice-approval-workflow.md`](./invoice-approval-workflow.md) |
