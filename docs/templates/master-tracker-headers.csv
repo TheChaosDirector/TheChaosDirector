@@ -1,0 +1,2 @@
+Row ID,Date Received,Vendor,Invoice #,Amount,Due Date,Drive Link,Status,Tax / W-9 OK?,Approved At,Rejected At,Reject Reason,Date Paid,Last Archive Review,Notes
+INV-0001,2026-08-01,Example Vendor LLC,INV-1001,1250.00,2026-08-15,https://drive.google.com/file/d/example,3 - Ready,Yes,,,,,,"Sample row — delete before go-live"

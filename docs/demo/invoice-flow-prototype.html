@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Invoice Flow Prototype (Mock)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --bg-deep: #e7e0d2;
+      --ink: #1c1915;
+      --muted: #6b645a;
+      --line: #cfc5b4;
+      --panel: rgba(255, 252, 246, 0.92);
+      --ok: #1f6b45;
+      --ok-bg: #dff3e8;
+      --warn: #9a5b12;
+      --warn-bg: #f7e7cc;
+      --bad: #9b2c2c;
+      --bad-bg: #f8e0e0;
+      --accent: #245b6b;
+      --accent-soft: #d7ebf0;
+      --shadow: 0 18px 50px rgba(40, 30, 10, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #fff8e8 0%, transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, #dceff2 0%, transparent 45%),
+        linear-gradient(180deg, var(--bg), var(--bg-deep));
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 20px 60px;
+    }
+
+    header {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      letter-spacing: -0.03em;
+    }
+
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      max-width: 62ch;
+    }
+
+    .banner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px dashed var(--line);
+      background: #fffaf0;
+      border-radius: 12px;
+      font-size: 14px;
+    }
+
+    .tag {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--warn-bg);
+      color: var(--warn);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .steps {
+      padding: 14px;
+      position: sticky;
+      top: 14px;
+      align-self: start;
+    }
+
+    .steps h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .step-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 6px;
+    }
+
+    .step-list button {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 10px;
+      padding: 10px 10px;
+      font: inherit;
+      cursor: pointer;
+      color: var(--ink);
+      display: grid;
+      gap: 2px;
+    }
+
+    .step-list button:hover { background: #f3eee3; }
+    .step-list button.active {
+      background: var(--accent-soft);
+      border-color: #9ec5cf;
+    }
+    .step-list button.done .title::after {
+      content: " ✓";
+      color: var(--ok);
+    }
+
+    .step-list .num {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .step-list .title { font-weight: 600; font-size: 14px; }
+
+    .stage {
+      padding: 22px;
+      min-height: 520px;
+      display: none;
+    }
+    .stage.active { display: block; animation: in 220ms ease; }
+
+    @keyframes in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .stage h3 {
+      margin: 0 0 6px;
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+    }
+
+    .stage p.lead {
+      margin: 0 0 18px;
+      color: var(--muted);
+    }
+
+    .mock {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fff;
+      margin-bottom: 16px;
+    }
+
+    .mock-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: #f7f2e8;
+      border-bottom: 1px solid var(--line);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #d2c7b4;
+    }
+    .dot.green { background: #3d9a68; }
+    .dot.red { background: #c45b5b; }
+
+    .mock-body { padding: 16px; }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 8px 12px;
+      font-size: 14px;
+    }
+    .kv dt { color: var(--muted); }
+    .kv dd { margin: 0; font-weight: 600; }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .s-intake { background: #ece7dc; }
+    .s-wait { background: var(--warn-bg); color: var(--warn); }
+    .s-ready { background: var(--accent-soft); color: var(--accent); }
+    .s-approved { background: var(--ok-bg); color: var(--ok); }
+    .s-paid { background: var(--ok-bg); color: var(--ok); }
+    .s-rejected { background: var(--bad-bg); color: var(--bad); }
+    .s-hold { background: var(--warn-bg); color: var(--warn); }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button.btn, a.btn {
+      appearance: none;
+      border: none;
+      border-radius: 10px;
+      padding: 11px 16px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ok { background: var(--ok); color: #fff; }
+    .btn-bad { background: var(--bad); color: #fff; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--ink);
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #f7f2e8;
+      border: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .note strong { color: var(--ink); }
+
+    .sheet {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .sheet th, .sheet td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+      text-align: left;
+    }
+    .sheet th {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .log {
+      margin-top: 18px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #1c1915;
+      color: #f4efe6;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px;
+      max-height: 180px;
+      overflow: auto;
+    }
+    .log .line { opacity: 0.9; margin: 0 0 6px; }
+    .log .line span { color: #8fd0b0; }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 14px;
+    }
+    @media (max-width: 860px) {
+      .split { grid-template-columns: 1fr; }
+    }
+
+    .choice {
+      display: grid;
+      gap: 10px;
+    }
+    .choice label {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      cursor: pointer;
+      background: #fff;
+    }
+    .choice label:has(input:checked) {
+      border-color: #9ec5cf;
+      background: var(--accent-soft);
+    }
+
+    footer.reset {
+      margin-top: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">Prototype · Not live Zapier</div>
+      <h1>Invoice approval full-path mock</h1>
+      <p class="sub">
+        Walk the entire process end-to-end. Email and Mercury are mocked so you can demo
+        without real inboxes or Bill Pay access. Sheet status + decisions behave like the real flow.
+      </p>
+      <div class="banner">
+        <span class="tag">MOCK EMAIL</span>
+        <span class="tag">MOCK MERCURY</span>
+        <span>Real later: Gmail trigger, Zapier webhooks, Mercury Bill Pay inbox.</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel steps">
+        <h2>Path</h2>
+        <ol class="step-list" id="stepList"></ol>
+      </aside>
+
+      <main>
+        <!-- 0 Intake -->
+        <section class="panel stage active" data-stage="0">
+          <h3>1. Invoice arrives (mock email)</h3>
+          <p class="lead">Pretend a vendor emailed finance. No real inbox needed.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span> finance@school.test — Inbox</div>
+            <div class="mock-body">
+              <div class="kv">
+                <dt>From</dt><dd id="fromLine">ap@northwind-supplies.test</dd>
+                <dt>Subject</dt><dd>Invoice INV-2044 — Classroom supplies</dd>
+                <dt>Attachment</dt><dd>INV-2044.pdf</dd>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-primary" data-next>Run Zapier smart check →</button>
+          </div>
+          <div class="note"><strong>Mock:</strong> In production this is a Gmail/Outlook trigger.</div>
+        </section>
+
+        <!-- 1 Vendor check -->
+        <section class="panel stage" data-stage="1">
+          <h3>2. Vendor / W-9 check</h3>
+          <p class="lead">Choose a path. Both continue to parsing after docs are OK.</p>
+          <div class="choice">
+            <label>
+              <input type="radio" name="vendorPath" value="known" checked />
+              <span><strong>Known vendor with W-9</strong><br /><span style="color:var(--muted)">Skip tax collection and continue.</span></span>
+            </label>
+            <label>
+              <input type="radio" name="vendorPath" value="new" />
+              <span><strong>New vendor / missing tax</strong><br /><span style="color:var(--muted)">Mock auto-reply + status “2 - Waiting on Docs”, then vendor “submits” form.</span></span>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" id="vendorContinue">Continue →</button>
+          </div>
+        </section>
+
+        <!-- 2 Waiting docs (conditional) -->
+        <section class="panel stage" data-stage="2">
+          <h3>2b. Waiting on docs (mock)</h3>
+          <p class="lead">Automation “emailed” the vendor a Typeform / W-9 link.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot green"></span> Mock auto-reply sent</div>
+            <div class="mock-body">
+              <p style="margin:0 0 10px">Hi Northwind — please submit your W-9: <em>typeform.test/w9-demo</em></p>
+              <span class="status s-wait">2 - Waiting on Docs</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" data-next>Vendor submits tax docs →</button>
+          </div>
+        </section>
+
+        <!-- 3 AI parse -->
+        <section class="panel stage" data-stage="3">
+          <h3>3. AI extraction (mock)</h3>
+          <p class="lead">Pretend the PDF was parsed. Values below are fixed demo data.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot"></span> AI Data Extraction Parser</div>
+            <div class="mock-body">
+              <div class="kv">
+                <dt>Vendor</dt><dd>Northwind Supplies LLC</dd>
+                <dt>Invoice #</dt><dd>INV-2044</dd>
+                <dt>Amount</dt><dd>$1,284.50</dd>
+                <dt>Due date</dt><dd>2026-08-20</dd>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" data-next>Save to Drive + Sheet →</button>
+          </div>
+          <div class="note"><strong>Mock:</strong> Later this is ChatGPT / Zapier AI / PDF parser.</div>
+        </section>
+
+        <!-- 4 Sheet -->
+        <section class="panel stage" data-stage="4">
+          <h3>4. Google Drive + Sheets (mock)</h3>
+          <p class="lead">PDF “saved” and a Master Tracker row created.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot"></span> Master Tracker</div>
+            <div class="mock-body" style="padding:0">
+              <table class="sheet">
+                <thead>
+                  <tr>
+                    <th>Row ID</th><th>Vendor</th><th>Invoice #</th><th>Amount</th><th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>INV-DEMO-01</td>
+                    <td>Northwind Supplies LLC</td>
+                    <td>INV-2044</td>
+                    <td>$1,284.50</td>
+                    <td><span class="status s-intake" id="sheetStatus">1 - Intake</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" data-next>Hand off to Stacey →</button>
+          </div>
+        </section>
+
+        <!-- 5 Stacey -->
+        <section class="panel stage" data-stage="5">
+          <h3>5. Stacey compliance review</h3>
+          <p class="lead">Human gate. Stacey checks contract/tax/data, then flips Ready.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot"></span> Stacey view</div>
+            <div class="mock-body">
+              <div class="kv">
+                <dt>Contract</dt><dd>On file (demo)</dd>
+                <dt>W-9</dt><dd id="w9Line">OK</dd>
+                <dt>Amount check</dt><dd>Matches PDF</dd>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-ok" id="markReady">Set status: 3 - Ready →</button>
+          </div>
+        </section>
+
+        <!-- 6 Head email -->
+        <section class="panel stage" data-stage="6">
+          <h3>6. Head of School email (mock)</h3>
+          <p class="lead">No real email. This screen is the approval message with both buttons.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot red"></span><span class="dot"></span> To: head@school.test</div>
+            <div class="mock-body">
+              <p style="margin-top:0"><strong>Invoice approval needed — Northwind — $1,284.50</strong></p>
+              <div class="kv" style="margin-bottom:14px">
+                <dt>Vendor</dt><dd>Northwind Supplies LLC</dd>
+                <dt>Invoice #</dt><dd>INV-2044</dd>
+                <dt>Amount</dt><dd>$1,284.50</dd>
+                <dt>PDF</dt><dd>drive.test/INV-2044.pdf</dd>
+              </div>
+              <div class="actions" style="margin-top:0">
+                <button class="btn btn-ok" id="approveBtn">APPROVE</button>
+                <button class="btn btn-bad" id="rejectBtn">REJECT</button>
+                <button class="btn btn-ghost" id="noReplyBtn">Simulate no reply (3 days)</button>
+              </div>
+            </div>
+          </div>
+          <div class="note"><strong>Mock:</strong> Live version uses Catch Hook links inside a real email.</div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+          </div>
+        </section>
+
+        <!-- 7a Approved / Mercury -->
+        <section class="panel stage" data-stage="7">
+          <h3>7. Approved → Mercury draft (mock)</h3>
+          <p class="lead">We pretend Zapier forwarded the PDF to Mercury’s Bill Pay inbox.</p>
+          <div class="split">
+            <div class="mock">
+              <div class="mock-bar"><span class="dot green"></span> Sheet update</div>
+              <div class="mock-body">
+                <span class="status s-approved">4 - Approved</span>
+                <p style="margin:12px 0 0; color:var(--muted); font-size:14px">Timestamped. PDF forward queued.</p>
+              </div>
+            </div>
+            <div class="mock">
+              <div class="mock-bar"><span class="dot"></span> Mercury Bill Pay · MOCK</div>
+              <div class="mock-body">
+                <div class="kv">
+                  <dt>Draft</dt><dd>Created by OCR (fake)</dd>
+                  <dt>Payee</dt><dd>Northwind Supplies LLC</dd>
+                  <dt>Amount</dt><dd>$1,284.50</dd>
+                  <dt>Source</dt><dd>Forwarded PDF</dd>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-ok" data-next>Stacey reviews &amp; clicks Pay →</button>
+          </div>
+          <div class="note"><strong>Mock:</strong> No Mercury API/account required for this demo.</div>
+        </section>
+
+        <!-- 7b Rejected -->
+        <section class="panel stage" data-stage="8">
+          <h3>7. Rejected (mock)</h3>
+          <p class="lead">Nothing goes to Mercury. Stacey gets a notice.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot red"></span> Email to Stacey · MOCK</div>
+            <div class="mock-body">
+              <span class="status s-rejected">6 - Rejected</span>
+              <p style="margin:12px 0; font-size:14px">Reason: Amount doesn’t match contract (demo).</p>
+              <div class="actions" style="margin-top:0">
+                <button class="btn btn-primary" id="fixAndResubmit">Fix &amp; set Ready again</button>
+                <button class="btn btn-ghost" id="closeRejected">Close as do-not-pay</button>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-goto="6">Back to Head email</button>
+          </div>
+        </section>
+
+        <!-- 7c On Hold -->
+        <section class="panel stage" data-stage="9">
+          <h3>7. On Hold (mock)</h3>
+          <p class="lead">No reply after ~3 business days.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot"></span> Reminder · MOCK</div>
+            <div class="mock-body">
+              <span class="status s-hold">7 - On Hold</span>
+              <p style="margin:12px 0 0; font-size:14px; color:var(--muted)">Head reminded + Stacey notified.</p>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" data-goto="6">Re-send approval email →</button>
+          </div>
+        </section>
+
+        <!-- 8 Paid -->
+        <section class="panel stage" data-stage="10">
+          <h3>8. Payment settled (mock)</h3>
+          <p class="lead">Stacey paid in Mercury. Settlement webhook updates the Sheet.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot green"></span> Mercury settled webhook · MOCK</div>
+            <div class="mock-body">
+              <div class="kv">
+                <dt>Status</dt><dd><span class="status s-paid">5 - Paid</span></dd>
+                <dt>Date Paid</dt><dd id="paidDate">—</dd>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" data-next>Archive + weekly digest →</button>
+          </div>
+        </section>
+
+        <!-- 9 Archive -->
+        <section class="panel stage" data-stage="11">
+          <h3>9. Archive + Friday digest (mock)</h3>
+          <p class="lead">Row moves to Archive. Weekly summary is “sent”.</p>
+          <div class="split">
+            <div class="mock">
+              <div class="mock-bar"><span class="dot"></span> Archive tab</div>
+              <div class="mock-body">
+                <table class="sheet">
+                  <thead><tr><th>Vendor</th><th>Invoice</th><th>Final</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>Northwind Supplies LLC</td>
+                      <td>INV-2044</td>
+                      <td id="archiveFinal">5 - Paid</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="mock">
+              <div class="mock-bar"><span class="dot"></span> Friday digest · MOCK</div>
+              <div class="mock-body" style="font-size:14px">
+                Paid this week: 1 ($1,284.50)<br />
+                Ready / On Hold / Rejected: 0
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-primary" data-next>Monthly archive review →</button>
+          </div>
+        </section>
+
+        <!-- 10 Monthly review -->
+        <section class="panel stage" data-stage="12">
+          <h3>10. Monthly / bi-monthly archive review</h3>
+          <p class="lead">Zapier reminds Stacey to spot-check the Archive.</p>
+          <div class="mock">
+            <div class="mock-bar"><span class="dot"></span> Reminder to Stacey · MOCK</div>
+            <div class="mock-body">
+              <ol style="margin:0; padding-left:18px; font-size:14px; line-height:1.6">
+                <li>Spot-check paid invoices</li>
+                <li>Review rejected / closed items</li>
+                <li>Flag anything that looks wrong</li>
+              </ol>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-prev>Back</button>
+            <button class="btn btn-ok" id="finishDemo">Mark review done ✓</button>
+          </div>
+          <div class="note" id="doneNote" hidden>
+            <strong>Demo complete.</strong> Full path walked with email + Mercury mocked.
+            When you’re ready, swap mock steps for real Gmail / Zapier / Mercury.
+          </div>
+        </section>
+
+        <div class="log" id="eventLog" aria-live="polite"></div>
+        <div class="footer reset">
+          <span>Prototype only · statuses mirror the real Sheet plan</span>
+          <button class="btn btn-ghost" id="resetAll">Reset demo</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const steps = [
+      { id: 0, title: "Invoice email" },
+      { id: 1, title: "Vendor / W-9 check" },
+      { id: 2, title: "Waiting on docs", optional: true },
+      { id: 3, title: "AI extraction" },
+      { id: 4, title: "Drive + Sheet" },
+      { id: 5, title: "Stacey review" },
+      { id: 6, title: "Head Approve/Reject" },
+      { id: 7, title: "Mercury draft (mock)" },
+      { id: 8, title: "Rejected path", optional: true },
+      { id: 9, title: "On Hold path", optional: true },
+      { id: 10, title: "Paid + settle" },
+      { id: 11, title: "Archive + digest" },
+      { id: 12, title: "Archive review" },
+    ];
+
+    const state = {
+      stage: 0,
+      vendorPath: "known",
+      visited: new Set([0]),
+      status: "1 - Intake",
+    };
+
+    const logEl = document.getElementById("eventLog");
+    const listEl = document.getElementById("stepList");
+
+    function log(msg) {
+      const t = new Date().toLocaleTimeString();
+      const line = document.createElement("p");
+      line.className = "line";
+      line.innerHTML = `<span>[${t}]</span> ${msg}`;
+      logEl.prepend(line);
+    }
+
+    function setStatus(label, cls) {
+      state.status = label;
+      const el = document.getElementById("sheetStatus");
+      if (el) {
+        el.textContent = label;
+        el.className = "status " + cls;
+      }
+    }
+
+    function renderNav() {
+      listEl.innerHTML = "";
+      steps.forEach((s, idx) => {
+        // hide optional unused branches unless visited
+        if (s.optional && !state.visited.has(s.id) && state.stage !== s.id) return;
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.innerHTML = `<span class="num">${String(idx + 1).padStart(2, "0")}</span><span class="title">${s.title}</span>`;
+        if (state.stage === s.id) btn.classList.add("active");
+        if (state.visited.has(s.id) && state.stage !== s.id) btn.classList.add("done");
+        btn.addEventListener("click", () => go(s.id));
+        li.appendChild(btn);
+        listEl.appendChild(li);
+      });
+    }
+
+    function go(id) {
+      document.querySelectorAll(".stage").forEach((el) => {
+        el.classList.toggle("active", Number(el.dataset.stage) === id);
+      });
+      state.stage = id;
+      state.visited.add(id);
+      if (id === 10) {
+        const d = new Date().toISOString().slice(0, 10);
+        document.getElementById("paidDate").textContent = d;
+        setStatus("5 - Paid", "s-paid");
+        document.getElementById("archiveFinal").textContent = "5 - Paid";
+        log("Mercury settled webhook → 5 - Paid (mock)");
+      }
+      renderNav();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    document.querySelectorAll("[data-next]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const map = {
+          0: 1,
+          3: 4,
+          4: 5,
+          7: 10,
+          10: 11,
+          11: 12,
+        };
+        if (state.stage === 2) {
+          log("Vendor submitted tax docs (mock Typeform)");
+          document.getElementById("w9Line").textContent = "Received via form";
+          go(3);
+          return;
+        }
+        const next = map[state.stage];
+        if (next != null) {
+          if (state.stage === 0) log("Mock email received — starting smart check");
+          if (state.stage === 3) log("AI extracted invoice fields (mock)");
+          if (state.stage === 4) {
+            log("PDF saved to Drive + Sheet row created (mock)");
+            setStatus("1 - Intake", "s-intake");
+          }
+          if (state.stage === 7) log("Stacey clicked Pay in Mercury (mock)");
+          if (state.stage === 10) log("Row archived + Friday digest sent (mock)");
+          go(next);
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-prev]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const back = {
+          1: 0,
+          2: 1,
+          3: state.vendorPath === "new" ? 2 : 1,
+          4: 3,
+          5: 4,
+          6: 5,
+          7: 6,
+          9: 6,
+          10: 7,
+          11: 10,
+          12: 11,
+        };
+        if (back[state.stage] != null) go(back[state.stage]);
+      });
+    });
+
+    document.querySelectorAll("[data-goto]").forEach((btn) => {
+      btn.addEventListener("click", () => go(Number(btn.dataset.goto)));
+    });
+
+    document.getElementById("vendorContinue").addEventListener("click", () => {
+      const path = document.querySelector('input[name="vendorPath"]:checked').value;
+      state.vendorPath = path;
+      if (path === "new") {
+        log("New vendor path — mock W-9 auto-reply + Waiting on Docs");
+        setStatus("2 - Waiting on Docs", "s-wait");
+        go(2);
+      } else {
+        log("Known vendor with W-9 — continue to AI parse");
+        document.getElementById("w9Line").textContent = "OK (on file)";
+        go(3);
+      }
+    });
+
+    document.getElementById("markReady").addEventListener("click", () => {
+      setStatus("3 - Ready", "s-ready");
+      log("Stacey set status to 3 - Ready");
+      go(6);
+    });
+
+    document.getElementById("approveBtn").addEventListener("click", () => {
+      setStatus("4 - Approved", "s-approved");
+      log("Head clicked APPROVE — forwarding PDF to Mercury inbox (mock)");
+      go(7);
+    });
+
+    document.getElementById("rejectBtn").addEventListener("click", () => {
+      setStatus("6 - Rejected", "s-rejected");
+      log("Head clicked REJECT — Stacey notified, Mercury skipped");
+      go(8);
+    });
+
+    document.getElementById("noReplyBtn").addEventListener("click", () => {
+      setStatus("7 - On Hold", "s-hold");
+      log("No reply after 3 business days — On Hold + reminders (mock)");
+      go(9);
+    });
+
+    document.getElementById("fixAndResubmit").addEventListener("click", () => {
+      setStatus("3 - Ready", "s-ready");
+      log("Stacey fixed issues and set Ready again");
+      go(6);
+    });
+
+    document.getElementById("closeRejected").addEventListener("click", () => {
+      document.getElementById("archiveFinal").textContent = "6 - Rejected";
+      log("Closed as do-not-pay — sent to Rejected archive (mock)");
+      go(11);
+    });
+
+    document.getElementById("finishDemo").addEventListener("click", () => {
+      document.getElementById("doneNote").hidden = false;
+      log("Monthly/bi-monthly archive review completed (mock)");
+    });
+
+    document.getElementById("resetAll").addEventListener("click", () => {
+      location.reload();
+    });
+
+    renderNav();
+    log("Demo ready — email and Mercury are mocked");
+  </script>
+</body>
+</html>
