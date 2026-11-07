@@ -42,6 +42,32 @@ def load_champion_model(cfg: Config):
     meta = load_champion_meta(cfg)
     path = meta["model_path"]
     learner = meta.get("learner", "")
+    mode = meta.get("mode") or cfg.mode
+
+    if learner == "concentrated_ppo_ensemble" or (
+        mode == "concentrated" and Path(path).name == "members.json"
+    ):
+        import json
+
+        from stable_baselines3 import PPO
+
+        from src.train.walkforward import AllocationPPOEnsemble
+
+        members = json.loads(Path(path).read_text())
+        models = [PPO.load(Path(path).parent / f"fold_{int(f):02d}.zip") for f in members]
+        return AllocationPPOEnsemble(models), meta
+
+    if mode == "concentrated" and (
+        "concentrated" in learner or str(path).endswith(".joblib")
+    ):
+        if "ensemble" in learner or str(path).endswith("ensemble.joblib"):
+            from src.train.concentrated_supervised import ConcentratedEnsembleAdapter
+
+            return ConcentratedEnsembleAdapter.load(path), meta
+        from src.train.concentrated_supervised import ConcentratedRankerAdapter
+
+        return ConcentratedRankerAdapter.load(path), meta
+
     if "ensemble" in learner or str(path).endswith("ensemble.joblib"):
         from src.train.daytrade_supervised import DaytradeEnsembleAdapter
 

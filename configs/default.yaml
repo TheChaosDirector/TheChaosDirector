@@ -1,7 +1,7 @@
 # Default configuration: the "full" research run.
 # Everything here is in plain units; comments explain what each knob means.
 
-mode: portfolio                  # portfolio | daytrade (CLI --mode overrides)
+mode: portfolio                  # portfolio | daytrade | concentrated (CLI --mode overrides)
 
 paths:
   lake_dir: data/lake            # where downloaded price files live

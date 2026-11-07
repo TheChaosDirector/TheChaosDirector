@@ -21,3 +21,4 @@ artifacts/
 !experience/**
 experience/**/*.parquet
 experience/**/*.tmp
+logs/

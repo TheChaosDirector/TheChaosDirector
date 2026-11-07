@@ -51,7 +51,7 @@ def pct(x: float) -> str:
 st.sidebar.title("Mission Control")
 config_files = sorted(str(p) for p in Path("configs").glob("*.yaml"))
 config_path = st.sidebar.selectbox("Config", config_files, index=0)
-mode = st.sidebar.selectbox("Mode", ["portfolio", "daytrade"], index=0)
+mode = st.sidebar.selectbox("Mode", ["portfolio", "daytrade", "concentrated"], index=0)
 cfg = load_config(config_path, mode=mode)
 art = cfg.artifacts_dir
 
@@ -68,8 +68,9 @@ st.sidebar.caption(f"Artifacts: `{art}`")
 st.sidebar.markdown(
     "This lab trades **simulated money only**. If the Referee tab shows a "
     "failure, no profit number on any other tab should be trusted.\n\n"
-    "**portfolio** = multi-name brain. **daytrade** = must pick one name, "
-    "buy open / sell close (may log 'hand was forced')."
+    "**portfolio** = diversified multi-name brain. **daytrade** = must pick one name, "
+    "buy open / sell close (may log 'hand was forced'). **concentrated** = few fat bets "
+    "aiming to beat SPY (separate champion; Alpaca not wired for it yet)."
 )
 
 st.title(f"Autonomous Trading Agent Lab — {mode}")

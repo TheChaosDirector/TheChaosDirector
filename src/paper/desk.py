@@ -17,9 +17,10 @@ import pandas as pd
 from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import resolve_pick
-from src.env.portfolio_env import action_to_weights
+from src.env.portfolio_env import action_to_weights, apply_hold_deadband
 from src.features.factory import build_daytrade_features, build_features
 from src.metrics.scorecard import plain_english, scorecard
+from src.modes import is_concentrated, is_daytrade
 from src.registry.store import load_champion_model, load_experiments
 from src.train.walkforward import _subset_daytrade_universe
 
@@ -112,9 +113,30 @@ def _advance_portfolio(cfg: Config, lake: Lake, model, meta: dict, state: dict, 
 
         today_close = lake.close.loc[today, tickers].values
         valid = np.isfinite(today_close).astype(np.float64)
+        max_names = cfg.concentrated.max_names if is_concentrated(cfg) else None
+        min_gross = cfg.concentrated.min_gross_exposure if is_concentrated(cfg) else None
         target = action_to_weights(
-            action, valid, cfg.risk.max_weight_per_name, cfg.risk.max_gross_exposure
+            action,
+            valid,
+            cfg.risk.max_weight_per_name,
+            cfg.risk.max_gross_exposure,
+            max_names=max_names,
+            min_gross=min_gross,
         )
+        if is_concentrated(cfg) and cfg.concentrated.hold_deadband > 0:
+            logits = np.asarray(action, dtype=np.float64)
+            name_logits = logits[:-1] if len(logits) == len(tickers) + 1 else target
+            target = apply_hold_deadband(
+                prev_weights,
+                target,
+                cfg.concentrated.hold_deadband,
+                max_weight=cfg.risk.max_weight_per_name,
+                max_gross=cfg.risk.max_gross_exposure,
+                min_gross=min_gross,
+                name_logits=name_logits,
+                valid_mask=valid,
+                max_names=max_names,
+            )
         turnover = float(np.abs(target - prev_weights).sum())
         cost_frac = turnover * cfg.costs.total_bps / 1e4
         state["equity"] *= 1.0 - cost_frac
@@ -221,7 +243,7 @@ def advance(cfg: Config, days: int = 1) -> dict:
     model, meta = load_champion_model(cfg)
     state = load_state(cfg, lake)
 
-    if cfg.mode == "daytrade":
+    if is_daytrade(cfg):
         processed = _advance_daytrade(cfg, lake, model, meta, state, days)
     else:
         processed = _advance_portfolio(cfg, lake, model, meta, state, days)
@@ -249,7 +271,7 @@ def summary(cfg: Config) -> dict:
     jpath = _journal_path(cfg)
     if jpath.exists():
         journal = pd.read_csv(jpath)
-        if cfg.mode == "daytrade":
+        if is_daytrade(cfg):
             rets = pd.Series(journal["day_return"].values)
             if "forced" in journal.columns:
                 out["forced_rate"] = float(journal["forced"].astype(float).mean())

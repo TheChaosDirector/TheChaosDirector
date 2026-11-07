@@ -81,6 +81,33 @@ class DaytradeCfg:
 
 
 @dataclass
+class ConcentratedCfg:
+    # Keep at most this many names after softmax (rest forced toward cash, then min_gross).
+    max_names: int = 6
+    # Must stay at least this invested (1 - cash). Stops the "hide in cash" cheat.
+    min_gross_exposure: float = 0.80
+    # Reward mix for PPO path: lean hard on beating the benchmark.
+    excess_reward_weight: float = 1.5
+    absolute_reward_weight: float = 0.05
+    # Default learner: supervised rank-then-size (ppo kept as opt-in).
+    learner: str = "supervised"  # supervised | ppo
+    # Grade/train under harsher costs so churn stops looking free (exam still honest).
+    train_cost_multiplier: float = 3.0
+    # PPO-only: extra penalty on daily turnover.
+    turnover_penalty: float = 0.35
+    # Momentum baseline blend into rank scores (0=pure model, 1=pure momentum).
+    baseline_mix: float = 0.45
+    # Which lagged momentum feature to use as the dumb-but-strong prior.
+    momentum_window: int = 63
+    # Ignore tiny day-to-day weight fidgets (fraction of portfolio).
+    hold_deadband: float = 0.03
+    # Keep incumbents if they remain within top (max_names + buffer) by score.
+    sticky_rank_buffer: int = 2
+    # Cap / prune green-fold ensembles so weak members don't dilute mean excess.
+    ensemble_max_members: int = 5
+
+
+@dataclass
 class AlpacaCfg:
     # Practice-money daily rebalance settings. Live trading is intentionally unsupported here.
     min_notional: float = 25.0  # ignore weight drifts smaller than this many dollars
@@ -98,7 +125,7 @@ class RefereeCfg:
     cheat_corr_threshold: float = 0.30
 
 
-VALID_MODES = ("portfolio", "daytrade")
+VALID_MODES = ("portfolio", "daytrade", "concentrated")
 
 
 @dataclass
@@ -112,6 +139,7 @@ class Config:
     risk: RiskCfg = field(default_factory=RiskCfg)
     training: TrainingCfg = field(default_factory=TrainingCfg)
     daytrade: DaytradeCfg = field(default_factory=DaytradeCfg)
+    concentrated: ConcentratedCfg = field(default_factory=ConcentratedCfg)
     paper: PaperCfg = field(default_factory=PaperCfg)
     referee: RefereeCfg = field(default_factory=RefereeCfg)
     alpaca: AlpacaCfg = field(default_factory=AlpacaCfg)
@@ -127,7 +155,7 @@ class Config:
 
     @property
     def artifacts_dir(self) -> Path:
-        # Mode-scoped so portfolio and daytrade champions never overwrite each other.
+        # Mode-scoped so portfolio / daytrade / concentrated champions never overwrite each other.
         return Path(self.paths.artifacts_dir) / self.mode
 
 
@@ -140,6 +168,7 @@ _SECTIONS = {
     "risk": RiskCfg,
     "training": TrainingCfg,
     "daytrade": DaytradeCfg,
+    "concentrated": ConcentratedCfg,
     "paper": PaperCfg,
     "referee": RefereeCfg,
     "alpaca": AlpacaCfg,
