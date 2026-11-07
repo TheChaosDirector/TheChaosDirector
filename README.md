@@ -98,6 +98,24 @@ Automation: [Daily paper trader](https://cursor.com/automations/608d1cba-8af4-11
 
 That prompt: uses the trading branch, downloads the champion, paper-rebalances, grades the choice diary, then **commits/pushes** `experience/portfolio/` so the history survives.
 
+### Treasury-competing copy
+
+A second brain can train to beat short-term US yields (the 13-week bill, `^IRX`) and to replay saved paper decisions. It is a copy:
+
+- Config: `configs/yield-compete.yaml` (short run: `configs/yield-compete-smoke.yaml`)
+- Artifacts: `artifacts/yield-compete/`, not `artifacts/portfolio/`
+- The daily job keeps downloading the `portfolio-champion` release
+- `scripts/snapshot-champion.sh` saves that release locally without republishing it
+- `scripts/pack-champion.sh` will not pack a yield-compete model as the live release
+
+```bash
+python -m src.cli download --config configs/yield-compete-smoke.yaml
+python -m src.cli train    --config configs/yield-compete-smoke.yaml
+python -m src.cli backtest --config configs/yield-compete-smoke.yaml
+```
+
+Cash earns the bill. The reward is profit minus that hurdle. The exam score used to pick the champion is out-of-sample excess versus the bill. Saved decisions only nudge training when most of their weight sits in the universe being trained, and the last quarter of those days is held out.
+
 ## Choice diary → future training data
 
 Every Alpaca rebalance (dry-run or execute) appends that day’s choice to:

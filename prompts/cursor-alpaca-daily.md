@@ -45,6 +45,7 @@ Run exactly:
 - Do NOT retrain models.
 - Do NOT open a pull request unless something failed and needs a code fix.
 - Never switch to live trading.
+- Do not train or load the Treasury-competing copy (`configs/yield-compete.yaml`, `artifacts/yield-compete/`). This job stays on the published `portfolio-champion` release.
 
 ## Final note (keep short)
 End with:

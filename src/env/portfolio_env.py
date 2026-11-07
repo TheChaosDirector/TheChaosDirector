@@ -11,6 +11,9 @@ Rules of the game, in plain English:
 - The score (reward) is the day's log profit, minus a penalty whenever the
   portfolio digs itself into a *new* deepest drawdown — so the agent learns
   that steady gains beat wild swings.
+- Optional Treasury mode: cash earns the short-term bill, the reward is the
+  log profit minus that hurdle, and the observation includes the yield. The
+  default call (no yield series) is the original game.
 """
 
 from __future__ import annotations
@@ -21,7 +24,9 @@ import pandas as pd
 from gymnasium import spaces
 
 from src.config import CostsCfg, RiskCfg
+from src.data.yields import annualized_observation
 from src.features.factory import FeaturePanel
+from src.train.experience_blend import hint_reward
 
 
 def action_to_weights(
@@ -62,6 +67,12 @@ class PortfolioEnv(gym.Env):
         start: int,
         end: int,
         cost_multiplier: float = 1.0,
+        cash_yield: np.ndarray | None = None,
+        cash_earns: bool = False,
+        observe_yield: bool = False,
+        reward_excess: bool = False,
+        experience: dict | None = None,
+        experience_scale: float = 0.0,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -75,9 +86,19 @@ class PortfolioEnv(gym.Env):
         self.start = start
         self.end = end
         self.cost_rate = costs.total_bps / 1e4 * cost_multiplier
+        self.cash_yield = None if cash_yield is None else np.asarray(cash_yield, dtype=np.float64)
+        if self.cash_yield is not None and len(self.cash_yield) != len(close):
+            raise ValueError("cash_yield must have one value per price row")
+        self.cash_earns = bool(cash_earns) and self.cash_yield is not None
+        self.observe_yield = bool(observe_yield)
+        self.reward_excess = bool(reward_excess) and self.cash_yield is not None
+        self.experience = experience or None
+        self.experience_scale = float(experience_scale) if self.experience else 0.0
 
         self.n_assets = len(panel.tickers)
         obs_dim = self.n_assets * panel.n_features + self.n_assets + 2
+        if self.observe_yield:
+            obs_dim += 1
         self.observation_space = spaces.Box(-np.inf, np.inf, (obs_dim,), np.float32)
         self.action_space = spaces.Box(-5.0, 5.0, (self.n_assets + 1,), np.float32)
 
@@ -96,15 +117,22 @@ class PortfolioEnv(gym.Env):
         tomorrow = self.prices[t + 1]
         return (np.isfinite(today) & np.isfinite(tomorrow)).astype(np.float64)
 
+    def _rf(self, t: int) -> float:
+        if self.cash_yield is None:
+            return 0.0
+        value = float(self.cash_yield[t])
+        return value if np.isfinite(value) else 0.0
+
     def _obs(self) -> np.ndarray:
         flat = self.panel.values[self.t].reshape(-1)
-        state = np.concatenate(
-            [
-                self.weights,
-                [1.0 - self.weights.sum()],  # cash
-                [self.drawdown],
-            ]
-        )
+        state_parts = [
+            self.weights,
+            [1.0 - self.weights.sum()],  # cash
+            [self.drawdown],
+        ]
+        if self.observe_yield:
+            state_parts.append([annualized_observation(self._rf(self.t))])
+        state = np.concatenate(state_parts)
         return np.concatenate([flat, state]).astype(np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
@@ -123,7 +151,11 @@ class PortfolioEnv(gym.Env):
         cost = turnover * self.cost_rate
 
         rets = np.where(valid > 0, self.prices[t + 1] / self.prices[t] - 1.0, 0.0)
+        rf = self._rf(t)
+        cash_weight = 1.0 - float(target.sum())
         gross_ret = float((target * rets).sum())
+        if self.cash_earns:
+            gross_ret += cash_weight * rf
         net_ret = gross_ret - cost
 
         self.equity *= 1.0 + net_ret
@@ -132,7 +164,15 @@ class PortfolioEnv(gym.Env):
         dd_increment = max(0.0, new_dd - self.drawdown)
         self.drawdown = new_dd
 
-        reward = float(np.log(max(1.0 + net_ret, 1e-6))) - self.risk.drawdown_penalty * dd_increment
+        reward = float(np.log(max(1.0 + net_ret, 1e-6)))
+        if self.reward_excess:
+            reward -= float(np.log(max(1.0 + rf, 1e-6)))
+        reward -= self.risk.drawdown_penalty * dd_increment
+        if self.experience_scale:
+            key = pd.Timestamp(self.close.index[t]).date()
+            hint = self.experience.get(key) if self.experience else None
+            if hint is not None:
+                reward += self.experience_scale * hint_reward(target, hint["weights"], bool(hint["beat"]))
 
         # Positions drift with prices until the next rebalance.
         growth = 1.0 + net_ret
@@ -147,6 +187,8 @@ class PortfolioEnv(gym.Env):
                 "turnover": turnover,
                 "equity": self.equity,
                 "weights": target.copy(),
+                "rf": rf,
+                "excess_return": net_ret - rf,
             }
         )
 
