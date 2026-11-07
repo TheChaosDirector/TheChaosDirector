@@ -99,9 +99,14 @@ class CompeteCfg:
     enabled: bool = False
     # ^IRX is the 13-week T-bill discount rate, quoted in percent (5.0 = 5%).
     symbol: str = "^IRX"
-    # "excess" pays the agent only for beating the bill. "absolute" keeps the
-    # old log-wealth reward while cash still earns the bill.
+    # "excess" pays the agent only for beating the bill.
+    # "both" also pays for beating the benchmark that day, after costs.
+    # "absolute" keeps the old log-wealth reward while cash still earns the bill.
     reward: str = "excess"
+    # Used only when reward == "both". Added to the log-excess reward as
+    # weight * (net return − benchmark return). Small on purpose: a large
+    # weight just teaches the model to hug the index and then lose to costs.
+    spy_beat_weight: float = 0.25
     observe_yield: bool = True
     cash_earns_yield: bool = True
     # Nudge toward saved paper decisions that beat the bill, and away from ones
@@ -113,10 +118,19 @@ class CompeteCfg:
     # Extra PPO steps on the saved decisions, starting from the walk-forward
     # copy. 0 skips that pass. The live champion is never the starting point.
     experience_timesteps: int = 0
+    # Last N decision days are sealed. No fold trains on them, no fold is
+    # picked because of them, and saved paper decisions are not replayed.
+    # One model is then fit on the years just before that seal and scored once.
+    final_holdout_days: int = 0
 
     def __post_init__(self) -> None:
-        if self.reward not in ("excess", "absolute"):
-            raise ValueError(f"compete.reward must be 'excess' or 'absolute', got {self.reward!r}")
+        if self.reward not in ("excess", "absolute", "both"):
+            raise ValueError(
+                "compete.reward must be 'excess', 'absolute', or 'both', "
+                f"got {self.reward!r}"
+            )
+        if self.final_holdout_days < 0:
+            raise ValueError("compete.final_holdout_days cannot be negative")
 
 
 @dataclass

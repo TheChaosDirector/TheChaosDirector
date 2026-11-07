@@ -119,7 +119,7 @@ def _make_portfolio_env(
         start=start,
         end=end,
         cost_multiplier=cost_multiplier,
-        **compete_env_kwargs(cfg, close.index, experience),
+        **compete_env_kwargs(cfg, close.index, experience, close=close),
     )
 
 
@@ -200,7 +200,6 @@ def _subset_daytrade_universe(close, volume, open_, benchmark: str, max_names: i
 
 def train_one_fold(cfg: Config, fold: Fold) -> dict:
     """Train + grade a single fold. Safe to call from a worker process."""
-    from stable_baselines3 import PPO
     from stable_baselines3.common.monitor import Monitor
 
     t0 = time.time()
@@ -242,20 +241,13 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         # Grade on the raw hurdle. The diary bonus is a training nudge, not part of the exam.
         is_env = _make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end)
         oos_env = _make_portfolio_env(close, panel, cfg, fold.test_start, fold.test_end)
-        policy_kwargs = dict(net_arch=[64, 64])
+        if cfg.compete.enabled and cfg.compete.reward == "both":
+            policy_kwargs = dict(net_arch=[128, 128])
+        else:
+            policy_kwargs = dict(net_arch=[64, 64])
         open_ = None
 
-    model = PPO(
-        "MlpPolicy",
-        train_env,
-        learning_rate=cfg.training.learning_rate,
-        n_steps=max(64, cfg.training.n_env_steps),
-        batch_size=min(64, max(32, cfg.training.n_env_steps // 4)),
-        ent_coef=0.02 if cfg.mode == "daytrade" else 0.0,
-        seed=cfg.training.seed + fold.index,
-        policy_kwargs=policy_kwargs,
-        verbose=0,
-    )
+    model = _new_ppo(cfg, train_env, seed=cfg.training.seed + fold.index, policy_kwargs=policy_kwargs)
     model.learn(total_timesteps=cfg.training.total_timesteps)
 
     is_journal = rollout(model, is_env)
@@ -301,6 +293,30 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
     save_fold(cfg, fold.index, model, metrics)
     oos_journal.to_csv(fold_dir(cfg, fold.index) / "oos_journal.csv")
     return metrics
+
+
+def _new_ppo(cfg: Config, env, *, seed: int, policy_kwargs: dict):
+    """One PPO learner. The dual-hurdle copy uses a wider net and a real batch."""
+    from stable_baselines3 import PPO
+
+    n_steps = max(64, cfg.training.n_env_steps)
+    if cfg.compete.enabled and cfg.compete.reward == "both":
+        batch = min(256, max(64, n_steps // 4))
+        ent = 0.005
+    else:
+        batch = min(64, max(32, n_steps // 4))
+        ent = 0.02 if cfg.mode == "daytrade" else 0.0
+    return PPO(
+        "MlpPolicy",
+        env,
+        learning_rate=cfg.training.learning_rate,
+        n_steps=n_steps,
+        batch_size=batch,
+        ent_coef=ent,
+        seed=seed,
+        policy_kwargs=policy_kwargs,
+        verbose=0,
+    )
 
 
 def _worker(payload: dict) -> dict:
@@ -363,7 +379,17 @@ def run_training(cfg: Config) -> dict:
     warmup = warmup_days(cfg.features)
     need_next_day = cfg.mode != "daytrade"
 
-    folds = make_folds(len(close), cfg, warmup, need_next_day=need_next_day)
+    from src.train.holdout import describe_seal, fold_history_length
+
+    if cfg.compete.enabled and cfg.compete.final_holdout_days > 0 and cfg.mode == "portfolio":
+        log.info("%s", describe_seal(close.index, cfg))
+
+    folds = make_folds(
+        fold_history_length(len(close), cfg),
+        cfg,
+        warmup,
+        need_next_day=need_next_day,
+    )
     if not folds:
         raise RuntimeError(
             "Not enough history for even one train/test fold. "
@@ -439,6 +465,29 @@ def run_training(cfg: Config) -> dict:
             n_pos,
             len(records),
         )
+    elif cfg.compete.enabled and cfg.compete.reward == "both" and "excess_oos" in records[0]:
+        both = [
+            r
+            for r in records
+            if r["out_of_sample"]["total_return"] > r["benchmark_oos"]["total_return"]
+            and r["out_of_sample"]["total_return"] > r.get("treasury_oos", {}).get("total_return", 0.0)
+        ]
+        pool = both or records
+        best = max(
+            pool,
+            key=lambda r: (r["excess_oos"]["sharpe"], r["out_of_sample"]["total_return"]),
+        )
+        selected_by = (
+            "pre_holdout_exam_beat_spy_and_tbill"
+            if both
+            else "pre_holdout_exam_excess_vs_tbill_none_beat_both"
+        )
+        n_pos = len(both)
+        log.info(
+            "Pre-holdout exams that beat both SPY and the bill: %d/%d",
+            len(both),
+            len(records),
+        )
     elif cfg.compete.enabled and "excess_oos" in records[0]:
         best = max(
             records,
@@ -489,6 +538,12 @@ def run_training(cfg: Config) -> dict:
         if diary and diary.get("plain_english"):
             log.info("%s", diary["plain_english"])
         champion = _maybe_experience_tune(cfg, close, panel, champion)
+        if cfg.compete.final_holdout_days > 0 and cfg.mode == "portfolio":
+            from src.train.holdout import train_and_score_holdout
+
+            holdout_champion = train_and_score_holdout(cfg, close, panel)
+            if holdout_champion is not None:
+                champion = holdout_champion
     return champion
 
 
@@ -504,6 +559,10 @@ def _maybe_experience_tune(cfg: Config, close: pd.DataFrame, panel, champion: di
     from stable_baselines3 import PPO
 
     report: dict = {"attempted": False, "promoted": False}
+    if cfg.compete.final_holdout_days > 0:
+        report["reason"] = "locked holdout protocol does not replay saved decisions"
+        _write_tune_report(cfg, report)
+        return champion
     if cfg.compete.experience_timesteps <= 0 or not cfg.compete.replay_experience:
         report["reason"] = "experience replay pass is off"
         _write_tune_report(cfg, report)

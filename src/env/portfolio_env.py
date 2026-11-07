@@ -73,6 +73,8 @@ class PortfolioEnv(gym.Env):
         reward_excess: bool = False,
         experience: dict | None = None,
         experience_scale: float = 0.0,
+        benchmark_fwd: np.ndarray | None = None,
+        spy_beat_weight: float = 0.0,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -94,6 +96,10 @@ class PortfolioEnv(gym.Env):
         self.reward_excess = bool(reward_excess) and self.cash_yield is not None
         self.experience = experience or None
         self.experience_scale = float(experience_scale) if self.experience else 0.0
+        self.benchmark_fwd = None if benchmark_fwd is None else np.asarray(benchmark_fwd, dtype=np.float64)
+        if self.benchmark_fwd is not None and len(self.benchmark_fwd) != len(close):
+            raise ValueError("benchmark_fwd must have one value per price row")
+        self.spy_beat_weight = float(spy_beat_weight) if self.benchmark_fwd is not None else 0.0
 
         self.n_assets = len(panel.tickers)
         obs_dim = self.n_assets * panel.n_features + self.n_assets + 2
@@ -121,6 +127,13 @@ class PortfolioEnv(gym.Env):
         if self.cash_yield is None:
             return 0.0
         value = float(self.cash_yield[t])
+        return value if np.isfinite(value) else 0.0
+
+    def _spy(self, t: int) -> float:
+        """Benchmark move from today's close to tomorrow's. Outcome only, never an input."""
+        if self.benchmark_fwd is None:
+            return 0.0
+        value = float(self.benchmark_fwd[t])
         return value if np.isfinite(value) else 0.0
 
     def _obs(self) -> np.ndarray:
@@ -167,6 +180,11 @@ class PortfolioEnv(gym.Env):
         reward = float(np.log(max(1.0 + net_ret, 1e-6)))
         if self.reward_excess:
             reward -= float(np.log(max(1.0 + rf, 1e-6)))
+        spy_ret = self._spy(t)
+        if self.spy_beat_weight:
+            # After-cost outperformance versus the index. The index return is
+            # the day's result, not something the agent saw before acting.
+            reward += self.spy_beat_weight * (net_ret - spy_ret)
         reward -= self.risk.drawdown_penalty * dd_increment
         if self.experience_scale:
             key = pd.Timestamp(self.close.index[t]).date()
@@ -189,6 +207,7 @@ class PortfolioEnv(gym.Env):
                 "weights": target.copy(),
                 "rf": rf,
                 "excess_return": net_ret - rf,
+                "benchmark_return": spy_ret,
             }
         )
 

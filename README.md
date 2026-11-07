@@ -116,6 +116,10 @@ python -m src.cli backtest --config configs/yield-compete-smoke.yaml
 
 Cash earns the bill. The reward is profit minus that hurdle. The exam score used to pick the champion is out-of-sample excess versus the bill. Saved decisions only nudge training when most of their weight sits in the universe being trained, and the last quarter of those days is held out.
 
+`configs/yield-compete-locked.yaml` is the stricter copy: it has to beat both the bill and SPY after 1 bp of commission and 10 bp of slippage. The last year of prices is sealed. Folds stop before that year, one model is trained on the years just in front of it, and that model is scored once (and again at 3x costs). It does not replace the live champion.
+
+That sealed year was scored once and did not win. From 2025-11-05 through 2026-11-05 the model made 2.4% after those costs. SPY made 9.7% and the 13-week bill made 3.8% on the same decision days. At 3x costs the model made -16.6%, with about 37% of the book traded each day. None of the nine earlier exam years beat both hurdles. The sealed year was not used to train again.
+
 ## Choice diary → future training data
 
 Every Alpaca rebalance (dry-run or execute) appends that day’s choice to:

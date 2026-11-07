@@ -12,19 +12,32 @@ from src.data.yields import align_tbill_daily
 from src.train.experience_blend import grade_diary_against_tbill
 
 
-def compete_env_kwargs(cfg: Config, index: pd.DatetimeIndex, experience: dict | None = None) -> dict:
+def compete_env_kwargs(
+    cfg: Config,
+    index: pd.DatetimeIndex,
+    experience: dict | None = None,
+    close: pd.DataFrame | None = None,
+) -> dict:
     """Env kwargs for a yield-aware gym. Empty when competition is off."""
     if not cfg.compete.enabled:
         return {}
     daily = align_tbill_daily(cfg, index)
-    return {
+    kwargs = {
         "cash_yield": np.asarray(daily, dtype=np.float64),
         "cash_earns": bool(cfg.compete.cash_earns_yield),
         "observe_yield": bool(cfg.compete.observe_yield),
-        "reward_excess": cfg.compete.reward == "excess",
+        "reward_excess": cfg.compete.reward in ("excess", "both"),
         "experience": experience,
         "experience_scale": float(cfg.compete.experience_scale) if experience else 0.0,
     }
+    if close is not None and cfg.universe.benchmark in close.columns:
+        spy = close[cfg.universe.benchmark].astype(float)
+        fwd = (spy.shift(-1) / spy - 1.0).to_numpy(dtype=np.float64)
+        kwargs["benchmark_fwd"] = np.nan_to_num(fwd, nan=0.0, posinf=0.0, neginf=0.0)
+        kwargs["spy_beat_weight"] = (
+            float(cfg.compete.spy_beat_weight) if cfg.compete.reward == "both" else 0.0
+        )
+    return kwargs
 
 
 def write_diary_grade(cfg: Config, index: pd.DatetimeIndex) -> dict | None:

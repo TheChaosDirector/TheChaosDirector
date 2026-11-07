@@ -49,11 +49,23 @@ SMOKE = [
     "AAPL", "MSFT", "AMZN", "JPM", "XOM", "JNJ", "WMT",
 ]
 
+# Liquid names with long histories. Used by the locked Treasury-and-SPY copy
+# so the download stays small enough to train hard without touching the live model.
+LIQUID = [
+    "SPY", "QQQ", "IWM", "DIA", "TLT", "IEF", "GLD",
+    "XLF", "XLK", "XLE", "XLV", "XLI", "XLP", "XLY", "XLU",
+    "AAPL", "MSFT", "AMZN", "GOOGL", "JPM", "XOM", "JNJ", "WMT",
+    "PG", "UNH", "V", "HD", "CVX", "KO", "PEP", "MRK", "CSCO",
+    "MCD", "INTC", "VZ", "DIS", "IBM", "CAT", "BA", "GE", "NKE", "ORCL",
+]
+
 
 def get_universe(name: str) -> list[str]:
     """Return the raw candidate ticker list for a named universe."""
     if name == "smoke":
         return list(dict.fromkeys(SMOKE))
+    if name == "liquid":
+        return list(dict.fromkeys(LIQUID))
     if name == "default":
         return list(dict.fromkeys(ETFS + LARGE_CAPS))
-    raise ValueError(f"Unknown universe '{name}' (expected 'default' or 'smoke')")
+    raise ValueError(f"Unknown universe '{name}' (expected 'default', 'liquid', or 'smoke')")

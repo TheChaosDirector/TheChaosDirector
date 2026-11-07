@@ -153,6 +153,96 @@ def test_align_tbill_does_not_peek_ahead(tmp_path):
     assert abs(daily.iloc[3] - 4.0 / 100 / 252) < 1e-12
 
 
+def test_both_reward_uses_the_outcome_not_the_observation(fake_market, cfg):
+    close, volume = fake_market
+    panel = build_features(close, volume, cfg.features, benchmark="SPY")
+    start = warmup_days(cfg.features)
+    daily = np.full(len(close), 0.02 / 252.0)
+    fwd = np.zeros(len(close))
+    env_a = PortfolioEnv(
+        close=close,
+        panel=panel,
+        costs=cfg.costs,
+        risk=cfg.risk,
+        start=start,
+        end=start + 2,
+        cash_yield=daily,
+        cash_earns=True,
+        observe_yield=True,
+        reward_excess=True,
+        benchmark_fwd=fwd,
+        spy_beat_weight=0.25,
+    )
+    fwd_b = fwd.copy()
+    fwd_b[start] = 0.05
+    env_b = PortfolioEnv(
+        close=close,
+        panel=panel,
+        costs=cfg.costs,
+        risk=cfg.risk,
+        start=start,
+        end=start + 2,
+        cash_yield=daily,
+        cash_earns=True,
+        observe_yield=True,
+        reward_excess=True,
+        benchmark_fwd=fwd_b,
+        spy_beat_weight=0.25,
+    )
+    obs_a, _ = env_a.reset()
+    obs_b, _ = env_b.reset()
+    np.testing.assert_array_equal(obs_a, obs_b)
+    action = np.zeros(env_a.action_space.shape, dtype=np.float32)
+    _, reward_a, _, _, _ = env_a.step(action)
+    _, reward_b, _, _, _ = env_b.step(action)
+    assert reward_b < reward_a
+
+
+def test_locked_holdout_is_outside_every_fold():
+    from src.train.holdout import fold_history_length, holdout_bounds
+    from src.train.walkforward import make_folds
+
+    cfg = Config()
+    cfg.compete.enabled = True
+    cfg.compete.final_holdout_days = 252
+    cfg.training.train_years = 2.0
+    cfg.training.test_months = 6
+    cfg.training.embargo_days = 10
+    n_dates = 4000
+    folds = make_folds(fold_history_length(n_dates, cfg), cfg, warmup=201, need_next_day=True)
+    bounds = holdout_bounds(n_dates, cfg)
+    assert folds
+    assert max(f.test_end for f in folds) <= bounds["train_end"]
+    assert bounds["train_end"] <= bounds["holdout_start"] - bounds["embargo_days"]
+
+
+def test_higher_costs_reduce_a_trading_episode(fake_market, cfg):
+    close, volume = fake_market
+    panel = build_features(close, volume, cfg.features, benchmark="SPY")
+    start = warmup_days(cfg.features)
+    end = len(close) - 1
+    action = np.zeros(panel.tickers.__len__() + 1, dtype=np.float32)
+    action[0] = 5.0
+
+    def _run(multiplier: float) -> float:
+        env = PortfolioEnv(
+            close=close,
+            panel=panel,
+            costs=cfg.costs,
+            risk=cfg.risk,
+            start=start,
+            end=end,
+            cost_multiplier=multiplier,
+        )
+        env.reset()
+        done = False
+        while not done:
+            _, _, done, _, _ = env.step(action)
+        return float(env.results()["equity"].iloc[-1])
+
+    assert _run(3.0) < _run(1.0)
+
+
 def test_rf_lookup_refuses_a_stale_quote():
     rf = pd.Series([0.0001], index=pd.to_datetime(["2024-01-02"]))
     assert rf_on(rf, pd.Timestamp("2024-01-03")) == 0.0001
