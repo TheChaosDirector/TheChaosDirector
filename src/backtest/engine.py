@@ -10,6 +10,8 @@ import json
 import logging
 from pathlib import Path
 
+import pandas as pd
+
 from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import DaytradeEnv
@@ -17,6 +19,7 @@ from src.env.portfolio_env import PortfolioEnv
 from src.features.factory import build_daytrade_features, build_features, warmup_days
 from src.metrics.scorecard import plain_english, scorecard
 from src.registry.store import load_champion_model
+from src.train.compete import compete_env_kwargs, write_diary_grade
 from src.train.walkforward import _subset_daytrade_universe, rollout
 
 
@@ -81,6 +84,7 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
             start=start,
             end=end,
             cost_multiplier=cost_multiplier,
+            **compete_env_kwargs(cfg, close.index),
         )
         journal = rollout(model, env)
         weights = env.weight_history()
@@ -115,6 +119,24 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
             f"{'SPY open→close' if cfg.mode == 'daytrade' else 'buy-and-hold ' + lake.benchmark}",
         ),
     }
+    if cfg.compete.enabled and "excess_return" in journal.columns:
+        excess_card = scorecard(journal["excess_return"])
+        tbill_card = scorecard(journal["rf"])
+        summary["excess_vs_tbill"] = excess_card
+        summary["tbill"] = tbill_card
+        summary["tbill_says"] = (
+            f"Cash in 13-week bills compounded to {tbill_card['total_return'] * 100:.1f}% "
+            f"over {tbill_card['n_days']} trading days "
+            f"(about {tbill_card['cagr'] * 100:.1f}% a year). "
+            "A bill yield barely wobbles day to day, so its Sharpe ratio is not a useful comparison."
+        )
+        summary["excess_says"] = plain_english(excess_card, "the agent minus the Treasury hurdle")
+        stitched = _stitch_portfolio_oos(cfg)
+        if stitched:
+            summary["walk_forward_oos"] = stitched
+        diary = write_diary_grade(cfg, close.index)
+        if diary:
+            summary["saved_diary_vs_tbill"] = diary
     if cfg.mode == "daytrade" and "forced" in journal.columns:
         summary["forced_rate"] = float(journal["forced"].mean())
         summary["forced_says"] = (
@@ -134,6 +156,51 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
     if cfg.mode == "daytrade" and tag == "base":
         _write_walk_forward_oos_report(cfg)
     return summary
+
+
+def _stitch_portfolio_oos(cfg: Config) -> dict | None:
+    """Stitch never-seen exam windows for the treasury copy."""
+    from src.registry.store import fold_dir, load_experiments
+
+    records = load_experiments(cfg)
+    if not records:
+        return None
+    nets, excesses, rfs = [], [], []
+    for record in records:
+        path = fold_dir(cfg, record["fold"]) / "oos_journal.csv"
+        if not path.exists():
+            continue
+        journal = pd.read_csv(path, parse_dates=["date"]).set_index("date")
+        nets.append(journal["net_return"])
+        if "excess_return" in journal.columns:
+            excesses.append(journal["excess_return"])
+        if "rf" in journal.columns:
+            rfs.append(journal["rf"])
+    if not nets:
+        return None
+
+    def _cat(frames: list[pd.Series]) -> pd.Series:
+        series = pd.concat(frames).sort_index()
+        return series[~series.index.duplicated(keep="first")]
+
+    agent = scorecard(_cat(nets))
+    out = {
+        "kind": "walk_forward_oos_only",
+        "note": (
+            "Only never-seen exam windows, stitched together. "
+            "Prefer this over the full-history backtest."
+        ),
+        "n_folds": len(records),
+        "agent": agent,
+        "plain_english": plain_english(agent, "the copy on exam windows only"),
+    }
+    if excesses:
+        excess = scorecard(_cat(excesses))
+        out["excess_vs_tbill"] = excess
+        out["excess_says"] = plain_english(excess, "exam-window excess over the Treasury hurdle")
+    if rfs:
+        out["tbill_total_return"] = scorecard(_cat(rfs))["total_return"]
+    return out
 
 
 def _write_walk_forward_oos_report(cfg: Config) -> dict | None:

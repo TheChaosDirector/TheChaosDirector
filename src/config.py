@@ -88,6 +88,38 @@ class AlpacaCfg:
 
 
 @dataclass
+class CompeteCfg:
+    """Train a separate copy whose hurdle is the short-term US Treasury yield.
+
+    Off by default. Turning it on must use its own artifacts directory: the
+    guard in ``src.registry.protect`` refuses to write into the live champion
+    folder (``artifacts/portfolio``).
+    """
+
+    enabled: bool = False
+    # ^IRX is the 13-week T-bill discount rate, quoted in percent (5.0 = 5%).
+    symbol: str = "^IRX"
+    # "excess" pays the agent only for beating the bill. "absolute" keeps the
+    # old log-wealth reward while cash still earns the bill.
+    reward: str = "excess"
+    observe_yield: bool = True
+    cash_earns_yield: bool = True
+    # Nudge toward saved paper decisions that beat the bill, and away from ones
+    # that lost to it. Only dates inside a fold's train window are used.
+    replay_experience: bool = True
+    experience_scale: float = 0.001
+    min_coverage: float = 0.50
+    holdout_frac: float = 0.25
+    # Extra PPO steps on the saved decisions, starting from the walk-forward
+    # copy. 0 skips that pass. The live champion is never the starting point.
+    experience_timesteps: int = 0
+
+    def __post_init__(self) -> None:
+        if self.reward not in ("excess", "absolute"):
+            raise ValueError(f"compete.reward must be 'excess' or 'absolute', got {self.reward!r}")
+
+
+@dataclass
 class PaperCfg:
     starting_cash: float = 100_000.0
 
@@ -115,6 +147,7 @@ class Config:
     paper: PaperCfg = field(default_factory=PaperCfg)
     referee: RefereeCfg = field(default_factory=RefereeCfg)
     alpaca: AlpacaCfg = field(default_factory=AlpacaCfg)
+    compete: CompeteCfg = field(default_factory=CompeteCfg)
     config_path: str = ""
 
     def __post_init__(self) -> None:
@@ -143,6 +176,7 @@ _SECTIONS = {
     "paper": PaperCfg,
     "referee": RefereeCfg,
     "alpaca": AlpacaCfg,
+    "compete": CompeteCfg,
 }
 
 

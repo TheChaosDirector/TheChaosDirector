@@ -81,7 +81,13 @@ def _latest_targets(cfg: Config) -> tuple[dict[str, float], dict, dict]:
     t = len(panel.dates) - 1
     obs_features = panel.values[t].reshape(-1)
     prev = np.zeros(len(tickers))
-    obs = np.concatenate([obs_features, prev, [1.0], [0.0]]).astype(np.float32)
+    obs_parts = [obs_features, prev, np.array([1.0, 0.0], dtype=np.float32)]
+    if cfg.compete.enabled and cfg.compete.observe_yield:
+        from src.data.yields import align_tbill_daily, annualized_observation
+
+        rf = float(align_tbill_daily(cfg, lake.close.index).iloc[t])
+        obs_parts.append(np.array([annualized_observation(rf)], dtype=np.float32))
+    obs = np.concatenate(obs_parts).astype(np.float32)
     action, _ = model.predict(obs, deterministic=True)
     action = np.asarray(action, dtype=np.float32).reshape(-1)
 
