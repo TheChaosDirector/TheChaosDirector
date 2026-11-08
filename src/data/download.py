@@ -22,6 +22,14 @@ import pandas as pd
 
 from src.config import Config
 from src.data.universe import get_universe
+from src.data.yields import (
+    download_curve_percent,
+    download_tbill_percent,
+    synthetic_curve_percent,
+    synthetic_tbill_percent,
+    write_curve_series,
+    write_tbill_series,
+)
 
 log = logging.getLogger(__name__)
 
@@ -178,5 +186,24 @@ def run_download(cfg: Config, synthetic: bool = False) -> dict:
     }
     manifest_path(cfg).parent.mkdir(parents=True, exist_ok=True)
     manifest_path(cfg).write_text(json.dumps(manifest, indent=2))
+    if cfg.compete.enabled:
+        bench_dates = pd.DatetimeIndex(pd.to_datetime(frames[cfg.universe.benchmark]["date"]))
+        if synthetic:
+            annual = synthetic_tbill_percent(bench_dates)
+            yield_source = "synthetic"
+        else:
+            annual = download_tbill_percent(cfg.compete.symbol, cfg.data.start, cfg.data.end)
+            yield_source = cfg.compete.symbol
+        write_tbill_series(cfg, annual, yield_source)
+        log.info("Treasury hurdle ready: %s (%d quotes)", yield_source, len(annual))
+        if cfg.compete.observe_curve:
+            if synthetic:
+                curve = synthetic_curve_percent(bench_dates)
+                curve_source = "synthetic"
+            else:
+                curve = download_curve_percent(cfg.data.start, cfg.data.end)
+                curve_source = "^IRX,^FVX,^TNX"
+            write_curve_series(cfg, curve, curve_source)
+            log.info("Yield curve ready: %s (%d rows)", curve_source, len(curve))
     log.info("Lake ready: %d tickers from %s", len(frames), source)
     return manifest

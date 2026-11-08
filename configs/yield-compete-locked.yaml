@@ -1,0 +1,71 @@
+# Dual-hurdle copy: beat the 13-week bill AND SPY, after commission and slippage.
+# Artifacts go to artifacts/yield-compete-locked/. The live champion is not writable.
+#
+# Protocol, fixed before the run:
+# - Last 252 decision days are sealed.
+# - Walk-forward exams used to inspect the setup stop one embargo before that seal.
+# - One model is trained on the years immediately before the seal.
+# - That model is scored once on the seal, then again at 3x costs.
+# - Saved 2026 paper decisions are not replayed, because they sit inside the seal.
+
+mode: portfolio
+
+paths:
+  lake_dir: data/lake-yield-locked
+  artifacts_dir: artifacts/yield-compete-locked
+
+universe:
+  name: liquid
+  benchmark: SPY
+  min_history_days: 756
+  max_tickers: 40
+
+data:
+  start: "2010-01-01"
+  end: null
+  min_dollar_volume: 5000000
+
+features:
+  momentum_windows: [5, 21, 63, 126]
+  vol_window: 21
+  volume_window: 21
+  ma_windows: [10, 50, 200]
+  regime_ma: 200
+
+costs:
+  commission_bps: 1.0
+  slippage_bps: 10.0
+  stress_multiplier: 3.0
+
+risk:
+  max_weight_per_name: 0.10
+  max_gross_exposure: 1.0
+  drawdown_penalty: 0.15
+
+training:
+  train_years: 5.0
+  test_months: 12
+  embargo_days: 10
+  total_timesteps: 250000
+  seed: 42
+  n_env_steps: 2048
+  learning_rate: 0.0003
+  n_workers: 1
+
+paper:
+  starting_cash: 100000
+
+referee:
+  leakage_sample_dates: 12
+  cheat_corr_threshold: 0.30
+
+compete:
+  enabled: true
+  symbol: "^IRX"
+  reward: both
+  spy_beat_weight: 0.25
+  observe_yield: true
+  cash_earns_yield: true
+  replay_experience: false
+  experience_timesteps: 0
+  final_holdout_days: 252

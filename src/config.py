@@ -88,6 +88,81 @@ class AlpacaCfg:
 
 
 @dataclass
+class CompeteCfg:
+    """Train a separate copy whose hurdle is the short-term US Treasury yield.
+
+    Off by default. Turning it on must use its own artifacts directory: the
+    guard in ``src.registry.protect`` refuses to write into the live champion
+    folder (``artifacts/portfolio``).
+    """
+
+    enabled: bool = False
+    # ^IRX is the 13-week T-bill discount rate, quoted in percent (5.0 = 5%).
+    symbol: str = "^IRX"
+    # "excess" pays the agent only for beating the bill.
+    # "both" also pays for beating the benchmark that day, after costs.
+    # "absolute" keeps the old log-wealth reward while cash still earns the bill.
+    reward: str = "excess"
+    # Used only when reward == "both". Added to the log-excess reward as
+    # weight * (net return − benchmark return). Small on purpose: a large
+    # weight just teaches the model to hug the index and then lose to costs.
+    spy_beat_weight: float = 0.25
+    observe_yield: bool = True
+    cash_earns_yield: bool = True
+    # Nudge toward saved paper decisions that beat the bill, and away from ones
+    # that lost to it. Only dates inside a fold's train window are used.
+    replay_experience: bool = True
+    experience_scale: float = 0.001
+    min_coverage: float = 0.50
+    holdout_frac: float = 0.25
+    # Extra PPO steps on the saved decisions, starting from the walk-forward
+    # copy. 0 skips that pass. The live champion is never the starting point.
+    experience_timesteps: int = 0
+    # Last N decision days are sealed. No fold trains on them, no fold is
+    # picked because of them, and saved paper decisions are not replayed.
+    # One model is then fit on the years just before that seal and scored once.
+    final_holdout_days: int = 0
+    # 1.0 subtracts the whole bill from the reward. Lower values keep the bill
+    # as a light penalty so the book is not paid mainly for hugging cash.
+    yield_weight: float = 1.0
+    # "bill" ranks exams by excess over the T-bill.
+    # "market" ranks them by after-cost excess over the benchmark, and the
+    # reward becomes log wealth minus the benchmark, minus yield_weight times
+    # the bill.
+    focus: str = "bill"
+    # Also show lagged 5-year and 10-year yields, and the 10y-minus-bill slope.
+    # These are inputs only. They do not raise the bill's weight in the reward.
+    observe_curve: bool = False
+    # 1 means the agent may trade every day. 5 means it trades, then holds for
+    # the next four sessions. Locked before a run; not tuned to a result.
+    rebalance_interval: int = 1
+    # Share of the book pinned to the benchmark before the policy's own bets.
+    # 0 leaves the book free. 0.5 keeps half in SPY on every rebalance.
+    spy_anchor: float = 0.0
+    # When true, the learned book is kept only if the stitched unseen years
+    # beat SPY after costs AND at least half of those years finish ahead.
+    # The sealed final year is not scored and cannot change that decision.
+    repeated_edge: bool = False
+
+    def __post_init__(self) -> None:
+        if self.reward not in ("excess", "absolute", "both"):
+            raise ValueError(
+                "compete.reward must be 'excess', 'absolute', or 'both', "
+                f"got {self.reward!r}"
+            )
+        if self.focus not in ("bill", "market"):
+            raise ValueError("compete.focus must be 'bill' or 'market', " f"got {self.focus!r}")
+        if self.final_holdout_days < 0:
+            raise ValueError("compete.final_holdout_days cannot be negative")
+        if self.yield_weight < 0:
+            raise ValueError("compete.yield_weight cannot be negative")
+        if self.rebalance_interval < 1:
+            raise ValueError("compete.rebalance_interval must be at least 1")
+        if not 0.0 <= self.spy_anchor < 1.0:
+            raise ValueError("compete.spy_anchor must be in [0, 1)")
+
+
+@dataclass
 class PaperCfg:
     starting_cash: float = 100_000.0
 
@@ -115,6 +190,7 @@ class Config:
     paper: PaperCfg = field(default_factory=PaperCfg)
     referee: RefereeCfg = field(default_factory=RefereeCfg)
     alpaca: AlpacaCfg = field(default_factory=AlpacaCfg)
+    compete: CompeteCfg = field(default_factory=CompeteCfg)
     config_path: str = ""
 
     def __post_init__(self) -> None:
@@ -143,6 +219,7 @@ _SECTIONS = {
     "paper": PaperCfg,
     "referee": RefereeCfg,
     "alpaca": AlpacaCfg,
+    "compete": CompeteCfg,
 }
 
 

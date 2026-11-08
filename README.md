@@ -98,6 +98,36 @@ Automation: [Daily paper trader](https://cursor.com/automations/608d1cba-8af4-11
 
 That prompt: uses the trading branch, downloads the champion, paper-rebalances, grades the choice diary, then **commits/pushes** `experience/portfolio/` so the history survives.
 
+### Treasury-competing copy
+
+A second brain can train to beat short-term US yields (the 13-week bill, `^IRX`) and to replay saved paper decisions. It is a copy:
+
+- Config: `configs/yield-compete.yaml` (short run: `configs/yield-compete-smoke.yaml`)
+- Artifacts: `artifacts/yield-compete/`, not `artifacts/portfolio/`
+- The daily job keeps downloading the `portfolio-champion` release
+- `scripts/snapshot-champion.sh` saves that release locally without republishing it
+- `scripts/pack-champion.sh` will not pack a yield-compete model as the live release
+
+```bash
+python -m src.cli download --config configs/yield-compete-smoke.yaml
+python -m src.cli train    --config configs/yield-compete-smoke.yaml
+python -m src.cli backtest --config configs/yield-compete-smoke.yaml
+```
+
+Cash earns the bill. The reward is profit minus that hurdle. The exam score used to pick the champion is out-of-sample excess versus the bill. Saved decisions only nudge training when most of their weight sits in the universe being trained, and the last quarter of those days is held out.
+
+`configs/yield-compete-locked.yaml` is the stricter copy: it has to beat both the bill and SPY after 1 bp of commission and 10 bp of slippage. The last year of prices is sealed. Folds stop before that year, one model is trained on the years just in front of it, and that model is scored once (and again at 3x costs). It does not replace the live champion.
+
+That sealed year was scored once and did not win. From 2025-11-05 through 2026-11-05 the model made 2.4% after those costs. SPY made 9.7% and the 13-week bill made 3.8% on the same decision days. At 3x costs the model made -16.6%, with about 37% of the book traded each day. None of the nine earlier exam years beat both hurdles. The sealed year was not used to train again.
+
+`configs/yield-compete-market.yaml` turns the bill down. Its reward is after-cost wealth versus SPY, minus 0.20 times the bill. It trains from 1998 on a wider universe and can see lagged 5-year and 10-year yields. The same last year is only a follow-up grade, because that window was already opened, and this copy still does not replace the live champion.
+
+That follow-up, scored once, made **+11.9%** from 2025-11-05 through 2026-11-05 after 1 bp commission and 10 bp slippage. SPY made **+9.7%** and the bill made **+3.8%**. At 3x costs the model made **−2.5%**. It traded about 25% of the book each day. Removing its three best days versus SPY leaves the year behind the index (+11.5% versus +13.1%). Five of the twenty earlier exams finished ahead of SPY. The sealed year was not used to train again.
+
+`configs/yield-compete-robust.yaml` adds history back to 1993 and the 120 most liquid names from the broad list. The book trades once every five sessions, and half of it stays in SPY. The learned book is kept only when the stitched unseen years beat SPY after costs and at least half of those years finish ahead. The last year is left out of that test and is not scored.
+
+That test, run once, kept the learned book. From 2000-02-09 through 2025-02-26 (6,300 exam days, 25 years the models had not trained on) it made **+866%** after 1 bp commission and 10 bp slippage. SPY made **+550%** on those same days. About **9.5%** a year versus **7.8%** for SPY. It finished ahead in **14 of 25** years, traded on about one day in five, and the worst drop was **−45%**. The sealed year after that was not scored.
+
 ## Choice diary → future training data
 
 Every Alpaca rebalance (dry-run or execute) appends that day’s choice to:

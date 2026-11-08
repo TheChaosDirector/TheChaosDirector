@@ -49,11 +49,43 @@ SMOKE = [
     "AAPL", "MSFT", "AMZN", "JPM", "XOM", "JNJ", "WMT",
 ]
 
+# Liquid names with long histories. Used by the locked Treasury-and-SPY copy
+# so the download stays small enough to train hard without touching the live model.
+LIQUID = [
+    "SPY", "QQQ", "IWM", "DIA", "TLT", "IEF", "GLD",
+    "XLF", "XLK", "XLE", "XLV", "XLI", "XLP", "XLY", "XLU",
+    "AAPL", "MSFT", "AMZN", "GOOGL", "JPM", "XOM", "JNJ", "WMT",
+    "PG", "UNH", "V", "HD", "CVX", "KO", "PEP", "MRK", "CSCO",
+    "MCD", "INTC", "VZ", "DIS", "IBM", "CAT", "BA", "GE", "NKE", "ORCL",
+]
+
+# Longer-history names for the market-focused copy. Recent listings are fine:
+# the downloader drops anything with too little history, and the gym skips a
+# name on days it does not yet have a price.
+MARKET = LIQUID + [
+    "EFA", "EEM", "LQD", "HYG", "XLB",
+    "NVDA", "META", "AVGO", "COST", "MA", "LLY", "TMO", "ABT", "ADBE", "CRM",
+    "AMD", "WFC", "QCOM", "HON", "TXN", "AMGN", "GS", "INTU", "UNP", "SBUX",
+    "DE", "MDT", "LMT", "AXP", "GILD", "TJX", "CVS", "ADP", "C", "SCHW",
+    "BMY", "LOW", "ACN", "NEE", "PM", "UPS", "MS", "RTX", "AMAT", "BKNG",
+    "SPGI", "BLK", "SYK", "MDLZ", "ADI", "CB", "SO", "DUK", "EOG", "ITW",
+    "SLB", "CSX", "CL", "ETN", "WM", "FDX", "PNC", "EMR", "MMM", "GD",
+    "TGT", "USB", "NSC", "AFL", "AEP", "TRV", "ALL", "AIG", "MET", "EXC",
+    "CME", "GIS", "VLO", "LRCX", "KLAC", "MNST", "CTSH", "HAL", "DVN",
+    "PPG", "KR", "GLW", "T", "COP", "MO",
+]
+
 
 def get_universe(name: str) -> list[str]:
     """Return the raw candidate ticker list for a named universe."""
     if name == "smoke":
         return list(dict.fromkeys(SMOKE))
+    if name == "liquid":
+        return list(dict.fromkeys(LIQUID))
+    if name == "market":
+        return list(dict.fromkeys(MARKET))
     if name == "default":
         return list(dict.fromkeys(ETFS + LARGE_CAPS))
-    raise ValueError(f"Unknown universe '{name}' (expected 'default' or 'smoke')")
+    raise ValueError(
+        f"Unknown universe '{name}' (expected 'default', 'market', 'liquid', or 'smoke')"
+    )

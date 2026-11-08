@@ -16,6 +16,13 @@ if [[ ! -f "$META" ]]; then
 fi
 
 MODEL_PATH="$(python3 -c "import json; print(json.load(open('$META'))['model_path'])")"
+case "$MODEL_PATH" in
+  *yield-compete*)
+    echo "Refusing to pack the Treasury-competing copy as the live portfolio-champion release."
+    echo "That copy lives under artifacts/yield-compete and is not the daily paper model."
+    exit 1
+    ;;
+esac
 if [[ ! -f "$MODEL_PATH" ]]; then
   # Prefer mode-scoped copy when legacy path is missing.
   FOLD="$(python3 -c "import json; print(json.load(open('$META'))['fold'])")"
