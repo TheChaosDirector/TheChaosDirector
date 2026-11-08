@@ -110,7 +110,20 @@ def _make_portfolio_env(
     end: int,
     cost_multiplier: float = 1.0,
     experience: dict | None = None,
+    volume=None,
 ):
+    eligible = None
+    if volume is not None and cfg.mode == "portfolio":
+        from src.data.eligibility import point_in_time_eligible
+
+        eligible = point_in_time_eligible(
+            close,
+            volume.reindex(index=close.index, columns=close.columns),
+            min_history_days=cfg.universe.min_history_days,
+            min_dollar_volume=cfg.data.min_dollar_volume,
+            max_names=cfg.universe.max_tickers,
+            benchmark=cfg.universe.benchmark,
+        )
     return PortfolioEnv(
         close=close,
         panel=panel,
@@ -119,6 +132,7 @@ def _make_portfolio_env(
         start=start,
         end=end,
         cost_multiplier=cost_multiplier,
+        eligible=eligible,
         **compete_env_kwargs(cfg, close.index, experience, close=close),
     )
 
@@ -235,12 +249,13 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
             )
         train_env = Monitor(
             _make_portfolio_env(
-                close, panel, cfg, fold.train_start, fold.train_end, experience=experience
+                close, panel, cfg, fold.train_start, fold.train_end,
+                experience=experience, volume=volume,
             )
         )
         # Grade on the raw hurdle. The diary bonus is a training nudge, not part of the exam.
-        is_env = _make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end)
-        oos_env = _make_portfolio_env(close, panel, cfg, fold.test_start, fold.test_end)
+        is_env = _make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end, volume=volume)
+        oos_env = _make_portfolio_env(close, panel, cfg, fold.test_start, fold.test_end, volume=volume)
         if cfg.compete.enabled and cfg.compete.repeated_edge:
             policy_kwargs = dict(net_arch=[64, 64])
         elif cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
@@ -459,7 +474,7 @@ def run_training(cfg: Config) -> dict:
         diary = write_diary_grade(cfg, close.index)
         if diary and diary.get("plain_english"):
             log.info("%s", diary["plain_english"])
-        return apply_repeated_edge_gate(cfg, close, panel, records)
+        return apply_repeated_edge_gate(cfg, close, panel, records, volume=volume)
 
     # Consistency-first champion for daytrade: prefer exam windows that finished
     # green (positive return + positive Sharpe). Fall back to best Sharpe if none.
@@ -573,17 +588,17 @@ def run_training(cfg: Config) -> dict:
         diary = write_diary_grade(cfg, close.index)
         if diary and diary.get("plain_english"):
             log.info("%s", diary["plain_english"])
-        champion = _maybe_experience_tune(cfg, close, panel, champion)
+        champion = _maybe_experience_tune(cfg, close, panel, champion, volume=volume)
         if cfg.compete.final_holdout_days > 0 and cfg.mode == "portfolio":
             from src.train.holdout import train_and_score_holdout
 
-            holdout_champion = train_and_score_holdout(cfg, close, panel)
+            holdout_champion = train_and_score_holdout(cfg, close, panel, volume=volume)
             if holdout_champion is not None:
                 champion = holdout_champion
     return champion
 
 
-def _maybe_experience_tune(cfg: Config, close: pd.DataFrame, panel, champion: dict) -> dict:
+def _maybe_experience_tune(cfg: Config, close: pd.DataFrame, panel, champion: dict, volume=None) -> dict:
     """Continue a copy of the walk-forward champion on saved decisions.
 
     The walk-forward zip and ``champion_walkforward.json`` stay in place. This
@@ -636,7 +651,7 @@ def _maybe_experience_tune(cfg: Config, close: pd.DataFrame, panel, champion: di
         report["reason"] = "training hints fell outside the tunable window"
         _write_tune_report(cfg, report)
         return champion
-    train_env = _make_portfolio_env(close, panel, cfg, start, end, experience=hints)
+    train_env = _make_portfolio_env(close, panel, cfg, start, end, experience=hints, volume=volume)
     model = PPO.load(champion["model_path"])
     model.set_env(train_env)
     log.info(
@@ -653,9 +668,12 @@ def _maybe_experience_tune(cfg: Config, close: pd.DataFrame, panel, champion: di
     model.save(tuned_path)
 
     warmup = warmup_days(cfg.features)
-    exam = _make_portfolio_env(close, panel, cfg, warmup, len(close) - 1)
+    exam = _make_portfolio_env(close, panel, cfg, warmup, len(close) - 1, volume=volume)
     base_journal = rollout(PPO.load(champion["model_path"]), exam)
-    tuned_journal = rollout(PPO.load(tuned_path), _make_portfolio_env(close, panel, cfg, warmup, len(close) - 1))
+    tuned_journal = rollout(
+        PPO.load(tuned_path),
+        _make_portfolio_env(close, panel, cfg, warmup, len(close) - 1, volume=volume),
+    )
     pretrained_stats = {
         "holdout_excess_total": _excess_total(base_journal, split.holdout_dates),
         "full_excess_total": _excess_total(base_journal, None),

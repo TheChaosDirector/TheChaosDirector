@@ -15,12 +15,11 @@ import pandas as pd
 from src.config import Config
 from src.data.lake import Lake
 from src.env.daytrade_env import DaytradeEnv
-from src.env.portfolio_env import PortfolioEnv
 from src.features.factory import build_daytrade_features, build_features, warmup_days
 from src.metrics.scorecard import plain_english, scorecard
 from src.registry.store import load_champion_model
-from src.train.compete import compete_env_kwargs, write_diary_grade
-from src.train.walkforward import _subset_daytrade_universe, rollout
+from src.train.compete import write_diary_grade
+from src.train.walkforward import _make_portfolio_env, _subset_daytrade_universe, rollout
 
 
 log = logging.getLogger(__name__)
@@ -76,15 +75,14 @@ def run_backtest(cfg: Config, cost_multiplier: float = 1.0, tag: str = "base") -
         bench_ret = bench_ret.dropna()
     else:
         end = len(close) - 1
-        env = PortfolioEnv(
-            close=close,
-            panel=panel,
-            costs=cfg.costs,
-            risk=cfg.risk,
-            start=start,
-            end=end,
+        env = _make_portfolio_env(
+            close,
+            panel,
+            cfg,
+            start,
+            end,
             cost_multiplier=cost_multiplier,
-            **compete_env_kwargs(cfg, close.index),
+            volume=volume,
         )
         journal = rollout(model, env)
         weights = env.weight_history()

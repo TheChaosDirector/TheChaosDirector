@@ -126,29 +126,23 @@ def _synthetic_market(cfg: Config, tickers: list[str]) -> dict[str, pd.DataFrame
 
 
 def _apply_filters(cfg: Config, frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Keep tickers with enough history and enough traded dollar volume."""
+    """Keep every name that actually downloaded.
+
+    An earlier version ranked names by dollar volume over the whole file and
+    kept the top ``max_tickers``. That uses later years to decide who was in
+    the market in earlier years. The cap is applied one day at a time by
+    :func:`src.data.eligibility.point_in_time_eligible`, from volume through
+    the prior close only.
+    """
     kept: dict[str, pd.DataFrame] = {}
-    for t, df in frames.items():
-        if len(df) < cfg.universe.min_history_days:
-            log.info("Dropping %s: only %d days of history", t, len(df))
+    for ticker, df in frames.items():
+        if df is None or len(df) < 2:
+            log.info("Dropping %s: no price history", ticker)
             continue
-        med_dollar = float((df["close"] * df["volume"]).median())
-        if med_dollar < cfg.data.min_dollar_volume and t != cfg.universe.benchmark:
-            log.info("Dropping %s: median dollar volume %.0f too low", t, med_dollar)
-            continue
-        kept[t] = df
+        kept[ticker] = df
 
     if cfg.universe.benchmark not in kept and cfg.universe.benchmark in frames:
         kept[cfg.universe.benchmark] = frames[cfg.universe.benchmark]
-
-    if len(kept) > cfg.universe.max_tickers:
-        # Keep the most liquid names (benchmark always survives).
-        liquidity = {
-            t: float((df["close"] * df["volume"]).median()) for t, df in kept.items()
-        }
-        ranked = sorted(liquidity, key=liquidity.get, reverse=True)
-        selected = set(ranked[: cfg.universe.max_tickers]) | {cfg.universe.benchmark}
-        kept = {t: kept[t] for t in kept if t in selected}
     return kept
 
 
