@@ -124,6 +124,10 @@ That sealed year was scored once and did not win. From 2025-11-05 through 2026-1
 
 That follow-up, scored once, made **+11.9%** from 2025-11-05 through 2026-11-05 after 1 bp commission and 10 bp slippage. SPY made **+9.7%** and the bill made **+3.8%**. At 3x costs the model made **−2.5%**. It traded about 25% of the book each day. Removing its three best days versus SPY leaves the year behind the index (+11.5% versus +13.1%). Five of the twenty earlier exams finished ahead of SPY. The sealed year was not used to train again.
 
+`configs/yield-compete-robust.yaml` adds history back to 1993 and the 120 most liquid names from the broad list. The book trades once every five sessions, and half of it stays in SPY. The learned book is kept only when the stitched unseen years beat SPY after costs and at least half of those years finish ahead. The last year is left out of that test and is not scored.
+
+That test, run once, kept the learned book. From 2000-02-09 through 2025-02-26 (6,300 exam days, 25 years the models had not trained on) it made **+866%** after 1 bp commission and 10 bp slippage. SPY made **+550%** on those same days. About **9.5%** a year versus **7.8%** for SPY. It finished ahead in **14 of 25** years, traded on about one day in five, and the worst drop was **−45%**. The sealed year after that was not scored.
+
 ## Choice diary → future training data
 
 Every Alpaca rebalance (dry-run or execute) appends that day’s choice to:

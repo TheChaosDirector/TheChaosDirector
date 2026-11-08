@@ -133,6 +133,16 @@ class CompeteCfg:
     # Also show lagged 5-year and 10-year yields, and the 10y-minus-bill slope.
     # These are inputs only. They do not raise the bill's weight in the reward.
     observe_curve: bool = False
+    # 1 means the agent may trade every day. 5 means it trades, then holds for
+    # the next four sessions. Locked before a run; not tuned to a result.
+    rebalance_interval: int = 1
+    # Share of the book pinned to the benchmark before the policy's own bets.
+    # 0 leaves the book free. 0.5 keeps half in SPY on every rebalance.
+    spy_anchor: float = 0.0
+    # When true, the learned book is kept only if the stitched unseen years
+    # beat SPY after costs AND at least half of those years finish ahead.
+    # The sealed final year is not scored and cannot change that decision.
+    repeated_edge: bool = False
 
     def __post_init__(self) -> None:
         if self.reward not in ("excess", "absolute", "both"):
@@ -146,6 +156,10 @@ class CompeteCfg:
             raise ValueError("compete.final_holdout_days cannot be negative")
         if self.yield_weight < 0:
             raise ValueError("compete.yield_weight cannot be negative")
+        if self.rebalance_interval < 1:
+            raise ValueError("compete.rebalance_interval must be at least 1")
+        if not 0.0 <= self.spy_anchor < 1.0:
+            raise ValueError("compete.spy_anchor must be in [0, 1)")
 
 
 @dataclass

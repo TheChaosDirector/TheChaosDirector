@@ -78,6 +78,9 @@ class PortfolioEnv(gym.Env):
         yield_weight: float = 1.0,
         focus: str = "bill",
         curve_obs: np.ndarray | None = None,
+        rebalance_interval: int = 1,
+        spy_anchor: float = 0.0,
+        anchor_ticker: str | None = None,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -111,6 +114,13 @@ class PortfolioEnv(gym.Env):
                 self.curve_obs = self.curve_obs.reshape(-1, 1)
             if len(self.curve_obs) != len(close):
                 raise ValueError("curve_obs must have one row per price row")
+        self.rebalance_interval = max(1, int(rebalance_interval))
+        self.spy_anchor = float(spy_anchor)
+        self.anchor_index = (
+            list(panel.tickers).index(anchor_ticker)
+            if anchor_ticker in list(panel.tickers)
+            else None
+        )
 
         self.n_assets = len(panel.tickers)
         obs_dim = self.n_assets * panel.n_features + self.n_assets + 2
@@ -168,13 +178,21 @@ class PortfolioEnv(gym.Env):
         self._reset_state()
         return self._obs(), {}
 
-    def step(self, action: np.ndarray):
-        t = self.t
+    def _target_from_action(self, action: np.ndarray, t: int) -> np.ndarray:
         valid = self._valid_mask(t)
         target = action_to_weights(
             action, valid, self.risk.max_weight_per_name, self.risk.max_gross_exposure
         )
+        anchor = self.spy_anchor
+        if anchor <= 0 or self.anchor_index is None or valid[self.anchor_index] <= 0:
+            return target
+        tilted = target * (1.0 - anchor)
+        tilted[self.anchor_index] += anchor
+        return tilted
 
+    def _apply_day(self, target: np.ndarray, *, apply_hint: bool) -> float:
+        t = self.t
+        valid = self._valid_mask(t)
         turnover = float(np.abs(target - self.weights).sum())
         cost = turnover * self.cost_rate
 
@@ -210,7 +228,7 @@ class PortfolioEnv(gym.Env):
                 # the day's result, not something the agent saw before acting.
                 reward += self.spy_beat_weight * (net_ret - spy_ret)
         reward -= self.risk.drawdown_penalty * dd_increment
-        if self.experience_scale:
+        if apply_hint and self.experience_scale:
             key = pd.Timestamp(self.close.index[t]).date()
             hint = self.experience.get(key) if self.experience else None
             if hint is not None:
@@ -234,8 +252,22 @@ class PortfolioEnv(gym.Env):
                 "benchmark_return": spy_ret,
             }
         )
-
         self.t += 1
+        return reward
+
+    def step(self, action: np.ndarray):
+        reward = 0.0
+        for offset in range(self.rebalance_interval):
+            if self.t >= self.end:
+                break
+            if offset == 0:
+                target = self._target_from_action(action, self.t)
+                apply_hint = True
+            else:
+                # Hold the drifted book. No extra trade until the next decision.
+                target = self.weights.copy()
+                apply_hint = False
+            reward += self._apply_day(target, apply_hint=apply_hint)
         terminated = self.t >= self.end
         return self._obs() if not terminated else np.zeros_like(self._obs()), reward, terminated, False, {}
 

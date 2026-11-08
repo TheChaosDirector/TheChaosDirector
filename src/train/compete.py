@@ -31,6 +31,9 @@ def compete_env_kwargs(
         "experience_scale": float(cfg.compete.experience_scale) if experience else 0.0,
         "yield_weight": float(cfg.compete.yield_weight),
         "focus": cfg.compete.focus,
+        "rebalance_interval": int(cfg.compete.rebalance_interval),
+        "spy_anchor": float(cfg.compete.spy_anchor),
+        "anchor_ticker": cfg.universe.benchmark,
     }
     if cfg.compete.observe_curve:
         kwargs["curve_obs"] = align_curve_lagged(cfg, index)

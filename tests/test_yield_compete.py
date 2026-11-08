@@ -331,6 +331,63 @@ def test_curve_observation_excludes_same_day_and_future_quotes(tmp_path):
     np.testing.assert_allclose(obs[3], [0.09, 0.09, 0.00])
 
 
+def test_weekly_rebalance_holds_between_decisions(fake_market, cfg):
+    close, volume = fake_market
+    panel = build_features(close, volume, cfg.features, benchmark="SPY")
+    start = warmup_days(cfg.features)
+    env = PortfolioEnv(
+        close=close,
+        panel=panel,
+        costs=cfg.costs,
+        risk=cfg.risk,
+        start=start,
+        end=start + 10,
+        rebalance_interval=5,
+    )
+    env.reset()
+    action = np.zeros(env.action_space.shape, dtype=np.float32)
+    env.step(action)
+    env.step(action)
+    turns = env.results()["turnover"].to_numpy()
+    assert len(turns) == 10
+    assert turns[0] > 0
+    assert np.all(turns[1:5] == 0)
+    assert np.all(turns[6:10] == 0)
+
+
+def test_spy_anchor_keeps_half_the_book_in_the_index(fake_market, cfg):
+    close, volume = fake_market
+    panel = build_features(close, volume, cfg.features, benchmark="SPY")
+    start = warmup_days(cfg.features)
+    env = PortfolioEnv(
+        close=close,
+        panel=panel,
+        costs=cfg.costs,
+        risk=cfg.risk,
+        start=start,
+        end=start + 2,
+        spy_anchor=0.5,
+        anchor_ticker="SPY",
+    )
+    action = np.full(env.action_space.shape, -5.0, dtype=np.float32)
+    action[1] = 5.0
+    env.reset()
+    env.step(action)
+    weights = env.weight_history().iloc[0]
+    assert float(weights["SPY"]) >= 0.5 - 1e-8
+    assert float(weights["SPY"]) < 1.0
+
+
+def test_repeated_edge_requires_the_stitch_and_half_the_years():
+    from src.train.robust import passes_repeated_edge
+
+    gaps = [0.01] * 10 + [-0.02] * 10
+    assert passes_repeated_edge(gaps, 0.01)
+    assert not passes_repeated_edge(gaps, -0.01)
+    assert not passes_repeated_edge([0.01] * 9 + [-0.02] * 11, 0.05)
+    assert not passes_repeated_edge([], 0.05)
+
+
 def test_rf_lookup_refuses_a_stale_quote():
     rf = pd.Series([0.0001], index=pd.to_datetime(["2024-01-02"]))
     assert rf_on(rf, pd.Timestamp("2024-01-03")) == 0.0001

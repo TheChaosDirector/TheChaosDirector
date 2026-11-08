@@ -1,0 +1,82 @@
+# More names and a longer history, with the overfitting checks locked first.
+# Artifacts go to artifacts/yield-compete-robust/. The live champion is not writable.
+#
+# Fixed before the run, and not revised after it:
+# - Prices from 1993, the 120 most liquid names from the broad list.
+# - The same lagged features as the market copy, including a year of momentum
+#   and the lagged 5-year and 10-year yields.
+# - The agent trades once every 5 sessions. Half the book stays in SPY.
+# - Reward is still after-cost wealth versus SPY, minus 0.20 times the bill.
+# - Costs stay at 1 bp commission and 10 bp slippage.
+# - The learned book is kept only if the stitched unseen years beat SPY and at
+#   least half of those years finish ahead. Otherwise the deployed book is SPY.
+# - The last 252 decision days are left out of every exam and are not scored.
+# - Saved paper decisions are not replayed.
+
+mode: portfolio
+
+paths:
+  lake_dir: data/lake-yield-robust
+  artifacts_dir: artifacts/yield-compete-robust
+
+universe:
+  name: default
+  benchmark: SPY
+  min_history_days: 756
+  max_tickers: 120
+
+data:
+  start: "1993-01-01"
+  end: null
+  min_dollar_volume: 5000000
+
+features:
+  momentum_windows: [5, 21, 63, 126, 252]
+  vol_window: 21
+  volume_window: 21
+  ma_windows: [10, 50, 200]
+  regime_ma: 200
+
+costs:
+  commission_bps: 1.0
+  slippage_bps: 10.0
+  stress_multiplier: 3.0
+
+risk:
+  max_weight_per_name: 0.10
+  max_gross_exposure: 1.0
+  drawdown_penalty: 0.15
+
+training:
+  train_years: 6.0
+  test_months: 12
+  embargo_days: 10
+  total_timesteps: 30000
+  seed: 42
+  n_env_steps: 512
+  learning_rate: 0.0003
+  n_workers: 1
+
+paper:
+  starting_cash: 100000
+
+referee:
+  leakage_sample_dates: 12
+  cheat_corr_threshold: 0.30
+
+compete:
+  enabled: true
+  symbol: "^IRX"
+  reward: both
+  focus: market
+  yield_weight: 0.20
+  spy_beat_weight: 1.0
+  observe_yield: true
+  observe_curve: true
+  cash_earns_yield: true
+  replay_experience: false
+  experience_timesteps: 0
+  final_holdout_days: 252
+  rebalance_interval: 5
+  spy_anchor: 0.50
+  repeated_edge: true

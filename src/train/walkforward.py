@@ -241,7 +241,9 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         # Grade on the raw hurdle. The diary bonus is a training nudge, not part of the exam.
         is_env = _make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end)
         oos_env = _make_portfolio_env(close, panel, cfg, fold.test_start, fold.test_end)
-        if cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
+        if cfg.compete.enabled and cfg.compete.repeated_edge:
+            policy_kwargs = dict(net_arch=[64, 64])
+        elif cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
             policy_kwargs = dict(net_arch=[128, 128])
         else:
             policy_kwargs = dict(net_arch=[64, 64])
@@ -303,7 +305,10 @@ def _new_ppo(cfg: Config, env, *, seed: int, policy_kwargs: dict):
     from stable_baselines3 import PPO
 
     n_steps = max(64, cfg.training.n_env_steps)
-    if cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
+    if cfg.compete.enabled and cfg.compete.repeated_edge:
+        batch = min(128, max(64, n_steps // 4))
+        ent = 0.01
+    elif cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
         batch = min(256, max(64, n_steps // 4))
         ent = 0.005
     else:
@@ -386,6 +391,12 @@ def run_training(cfg: Config) -> dict:
 
     if cfg.compete.enabled and cfg.compete.final_holdout_days > 0 and cfg.mode == "portfolio":
         log.info("%s", describe_seal(close.index, cfg))
+        if cfg.compete.repeated_edge:
+            log.info(
+                "Repeated-edge rule is locked before this run: the stitched exams must beat "
+                "SPY after costs, and at least half of those years must finish ahead. "
+                "The sealed year is not scored."
+            )
 
     folds = make_folds(
         fold_history_length(len(close), cfg),
@@ -441,6 +452,14 @@ def run_training(cfg: Config) -> dict:
         records.sort(key=lambda r: r["fold"])
 
     save_experiments(cfg, records)
+
+    if cfg.compete.enabled and cfg.compete.repeated_edge and cfg.mode == "portfolio":
+        from src.train.robust import apply_repeated_edge_gate
+
+        diary = write_diary_grade(cfg, close.index)
+        if diary and diary.get("plain_english"):
+            log.info("%s", diary["plain_english"])
+        return apply_repeated_edge_gate(cfg, close, panel, records)
 
     # Consistency-first champion for daytrade: prefer exam windows that finished
     # green (positive return + positive Sharpe). Fall back to best Sharpe if none.
