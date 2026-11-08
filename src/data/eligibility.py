@@ -22,6 +22,7 @@ def point_in_time_eligible(
     min_dollar_volume: float,
     max_names: int,
     benchmark: str,
+    dollar_volume: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Boolean frame, same shape as ``close``. True means the name may be held.
 
@@ -29,7 +30,8 @@ def point_in_time_eligible(
     closes and its trailing median dollar volume clears ``min_dollar_volume``.
     If more than ``max_names`` qualify, only the most liquid of them are kept.
     The benchmark is kept whenever it has a prior close, and it counts toward
-    the cap.
+    the cap. ``dollar_volume`` overrides ``close * volume`` when the close used
+    for returns is split-adjusted and would misstate how many dollars traded.
     """
     if max_names < 1:
         raise ValueError("max_names must be at least 1")
@@ -37,7 +39,10 @@ def point_in_time_eligible(
     close = close.sort_index()
     volume = volume.reindex(index=close.index, columns=close.columns)
     history = close.notna().cumsum().shift(1).fillna(0.0)
-    past_dollar = (close * volume).shift(1)
+    traded = close * volume if dollar_volume is None else dollar_volume.reindex(
+        index=close.index, columns=close.columns
+    )
+    past_dollar = traded.shift(1)
     trail = past_dollar.rolling(window, min_periods=window).median()
 
     eligible = (history >= window) & (trail >= float(min_dollar_volume))
