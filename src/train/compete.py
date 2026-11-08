@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import Config
-from src.data.yields import align_tbill_daily
+from src.data.yields import align_curve_lagged, align_tbill_daily
 from src.train.experience_blend import grade_diary_against_tbill
 
 
@@ -29,14 +29,17 @@ def compete_env_kwargs(
         "reward_excess": cfg.compete.reward in ("excess", "both"),
         "experience": experience,
         "experience_scale": float(cfg.compete.experience_scale) if experience else 0.0,
+        "yield_weight": float(cfg.compete.yield_weight),
+        "focus": cfg.compete.focus,
     }
+    if cfg.compete.observe_curve:
+        kwargs["curve_obs"] = align_curve_lagged(cfg, index)
     if close is not None and cfg.universe.benchmark in close.columns:
         spy = close[cfg.universe.benchmark].astype(float)
         fwd = (spy.shift(-1) / spy - 1.0).to_numpy(dtype=np.float64)
         kwargs["benchmark_fwd"] = np.nan_to_num(fwd, nan=0.0, posinf=0.0, neginf=0.0)
-        kwargs["spy_beat_weight"] = (
-            float(cfg.compete.spy_beat_weight) if cfg.compete.reward == "both" else 0.0
-        )
+        use_spy_weight = cfg.compete.reward == "both" or cfg.compete.focus == "market"
+        kwargs["spy_beat_weight"] = float(cfg.compete.spy_beat_weight) if use_spy_weight else 0.0
     return kwargs
 
 

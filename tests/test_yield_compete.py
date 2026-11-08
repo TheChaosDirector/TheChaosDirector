@@ -243,6 +243,94 @@ def test_higher_costs_reduce_a_trading_episode(fake_market, cfg):
     assert _run(3.0) < _run(1.0)
 
 
+def test_lighter_bill_weight_stops_paying_the_agent_to_match_cash(fake_market, cfg):
+    close, volume = fake_market
+    panel = build_features(close, volume, cfg.features, benchmark="SPY")
+    start = warmup_days(cfg.features)
+    daily = np.full(len(close), 0.05 / 252.0)
+    env = PortfolioEnv(
+        close=close,
+        panel=panel,
+        costs=cfg.costs,
+        risk=cfg.risk,
+        start=start,
+        end=start + 15,
+        cash_yield=daily,
+        cash_earns=True,
+        reward_excess=True,
+        yield_weight=0.0,
+    )
+    action = np.full(env.action_space.shape, -5.0, dtype=np.float32)
+    action[-1] = 5.0
+    env.reset()
+    done = False
+    rewards = []
+    while not done:
+        _, reward, done, _, _ = env.step(action)
+        rewards.append(reward)
+    assert float(np.mean(rewards)) > 0.5 * np.log(1.0 + daily[start])
+
+
+def test_market_focus_cares_more_about_spy_than_the_bill(fake_market, cfg):
+    close, volume = fake_market
+    panel = build_features(close, volume, cfg.features, benchmark="SPY")
+    start = warmup_days(cfg.features)
+    daily = np.full(len(close), 0.05 / 252.0)
+    flat = np.zeros(len(close))
+    up = flat.copy()
+    up[start] = 0.02
+
+    def _reward(fwd, weight: float) -> float:
+        env = PortfolioEnv(
+            close=close,
+            panel=panel,
+            costs=cfg.costs,
+            risk=cfg.risk,
+            start=start,
+            end=start + 2,
+            cash_yield=daily,
+            cash_earns=True,
+            reward_excess=True,
+            benchmark_fwd=fwd,
+            spy_beat_weight=1.0,
+            yield_weight=weight,
+            focus="market",
+        )
+        env.reset()
+        _, reward, _, _, _ = env.step(np.zeros(env.action_space.shape, dtype=np.float32))
+        return float(reward)
+
+    spy_effect = abs(_reward(up, 0.2) - _reward(flat, 0.2))
+    bill_effect = abs(_reward(flat, 1.0) - _reward(flat, 0.2))
+    assert spy_effect > 10 * bill_effect
+
+
+def test_curve_observation_excludes_same_day_and_future_quotes(tmp_path):
+    from src.data.yields import align_curve_lagged, write_curve_series
+
+    cfg = Config()
+    cfg.paths.lake_dir = str(tmp_path)
+    dates = pd.bdate_range("2020-01-01", periods=4)
+    write_curve_series(
+        cfg,
+        pd.DataFrame(
+            {
+                "date": dates,
+                "irx": [1.0, 1.0, 9.0, 1.0],
+                "fvx": [2.0, 2.0, 9.0, 2.0],
+                "tnx": [3.0, 3.0, 9.0, 3.0],
+            }
+        ),
+        "test",
+    )
+    obs = align_curve_lagged(cfg, dates)
+    assert obs.shape == (4, 3)
+    assert np.all(obs[0] == 0.0)
+    np.testing.assert_allclose(obs[1], [0.03, 0.02, 0.02])
+    np.testing.assert_allclose(obs[2], [0.03, 0.02, 0.02])
+    np.testing.assert_allclose(obs[3], [0.09, 0.09, 0.00])
+
+
 def test_rf_lookup_refuses_a_stale_quote():
     rf = pd.Series([0.0001], index=pd.to_datetime(["2024-01-02"]))
     assert rf_on(rf, pd.Timestamp("2024-01-03")) == 0.0001

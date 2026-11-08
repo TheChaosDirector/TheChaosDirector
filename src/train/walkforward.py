@@ -241,7 +241,7 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         # Grade on the raw hurdle. The diary bonus is a training nudge, not part of the exam.
         is_env = _make_portfolio_env(close, panel, cfg, fold.train_start, fold.train_end)
         oos_env = _make_portfolio_env(close, panel, cfg, fold.test_start, fold.test_end)
-        if cfg.compete.enabled and cfg.compete.reward == "both":
+        if cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
             policy_kwargs = dict(net_arch=[128, 128])
         else:
             policy_kwargs = dict(net_arch=[64, 64])
@@ -289,6 +289,9 @@ def train_one_fold(cfg: Config, fold: Fold) -> dict:
         metrics["excess_oos"] = scorecard(oos_journal["excess_return"])
         metrics["treasury_oos"] = scorecard(oos_journal["rf"])
         metrics["experience_hints_in_train"] = 0 if experience is None else len(experience)
+    if "benchmark_return" in oos_journal.columns and float(oos_journal["benchmark_return"].abs().sum()) > 0:
+        metrics["spy_oos"] = scorecard(oos_journal["benchmark_return"])
+        metrics["spy_excess_oos"] = scorecard(oos_journal["net_return"] - oos_journal["benchmark_return"])
 
     save_fold(cfg, fold.index, model, metrics)
     oos_journal.to_csv(fold_dir(cfg, fold.index) / "oos_journal.csv")
@@ -300,7 +303,7 @@ def _new_ppo(cfg: Config, env, *, seed: int, policy_kwargs: dict):
     from stable_baselines3 import PPO
 
     n_steps = max(64, cfg.training.n_env_steps)
-    if cfg.compete.enabled and cfg.compete.reward == "both":
+    if cfg.compete.enabled and (cfg.compete.reward == "both" or cfg.compete.focus == "market"):
         batch = min(256, max(64, n_steps // 4))
         ent = 0.005
     else:
@@ -465,6 +468,18 @@ def run_training(cfg: Config) -> dict:
             n_pos,
             len(records),
         )
+    elif cfg.compete.enabled and cfg.compete.focus == "market" and "spy_oos" in records[0]:
+        def _gap(row: dict) -> float:
+            return row["out_of_sample"]["total_return"] - row["spy_oos"]["total_return"]
+
+        ahead = [r for r in records if _gap(r) > 0]
+        pool = ahead or records
+        best = max(pool, key=lambda r: (_gap(r), r["out_of_sample"]["sharpe"]))
+        selected_by = (
+            "pre_holdout_exam_beat_spy" if ahead else "pre_holdout_exam_closest_to_spy_none_ahead"
+        )
+        n_pos = len(ahead)
+        log.info("Pre-holdout exams ahead of SPY after costs: %d/%d", len(ahead), len(records))
     elif cfg.compete.enabled and cfg.compete.reward == "both" and "excess_oos" in records[0]:
         both = [
             r
@@ -516,7 +531,9 @@ def run_training(cfg: Config) -> dict:
         "config_path": cfg.config_path,
     }
     if cfg.compete.enabled:
-        champion["objective"] = "beat_tbill"
+        champion["objective"] = "beat_spy" if cfg.compete.focus == "market" else "beat_tbill"
+        champion["yield_weight"] = cfg.compete.yield_weight
+        champion["focus"] = cfg.compete.focus
         champion["hurdle_symbol"] = cfg.compete.symbol
         champion["learner"] = "ppo"
     save_champion(cfg, champion)

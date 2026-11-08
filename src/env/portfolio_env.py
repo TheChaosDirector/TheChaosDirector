@@ -75,6 +75,9 @@ class PortfolioEnv(gym.Env):
         experience_scale: float = 0.0,
         benchmark_fwd: np.ndarray | None = None,
         spy_beat_weight: float = 0.0,
+        yield_weight: float = 1.0,
+        focus: str = "bill",
+        curve_obs: np.ndarray | None = None,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -100,11 +103,21 @@ class PortfolioEnv(gym.Env):
         if self.benchmark_fwd is not None and len(self.benchmark_fwd) != len(close):
             raise ValueError("benchmark_fwd must have one value per price row")
         self.spy_beat_weight = float(spy_beat_weight) if self.benchmark_fwd is not None else 0.0
+        self.yield_weight = float(yield_weight)
+        self.focus = focus if focus in ("bill", "market") else "bill"
+        self.curve_obs = None if curve_obs is None else np.asarray(curve_obs, dtype=np.float64)
+        if self.curve_obs is not None:
+            if self.curve_obs.ndim == 1:
+                self.curve_obs = self.curve_obs.reshape(-1, 1)
+            if len(self.curve_obs) != len(close):
+                raise ValueError("curve_obs must have one row per price row")
 
         self.n_assets = len(panel.tickers)
         obs_dim = self.n_assets * panel.n_features + self.n_assets + 2
         if self.observe_yield:
             obs_dim += 1
+        if self.curve_obs is not None:
+            obs_dim += self.curve_obs.shape[1]
         self.observation_space = spaces.Box(-np.inf, np.inf, (obs_dim,), np.float32)
         self.action_space = spaces.Box(-5.0, 5.0, (self.n_assets + 1,), np.float32)
 
@@ -145,6 +158,8 @@ class PortfolioEnv(gym.Env):
         ]
         if self.observe_yield:
             state_parts.append([annualized_observation(self._rf(self.t))])
+        if self.curve_obs is not None:
+            state_parts.append(np.nan_to_num(self.curve_obs[self.t], nan=0.0, posinf=0.0, neginf=0.0))
         state = np.concatenate(state_parts)
         return np.concatenate([flat, state]).astype(np.float32)
 
@@ -177,14 +192,23 @@ class PortfolioEnv(gym.Env):
         dd_increment = max(0.0, new_dd - self.drawdown)
         self.drawdown = new_dd
 
-        reward = float(np.log(max(1.0 + net_ret, 1e-6)))
-        if self.reward_excess:
-            reward -= float(np.log(max(1.0 + rf, 1e-6)))
         spy_ret = self._spy(t)
-        if self.spy_beat_weight:
-            # After-cost outperformance versus the index. The index return is
-            # the day's result, not something the agent saw before acting.
-            reward += self.spy_beat_weight * (net_ret - spy_ret)
+        log_net = float(np.log(max(1.0 + net_ret, 1e-6)))
+        log_rf = float(np.log(max(1.0 + rf, 1e-6)))
+        if self.focus == "market" and self.benchmark_fwd is not None:
+            # Primary score is after-cost wealth versus the index. The bill is
+            # only a light haircut, so cash is not the thing the agent is paid to match.
+            scale = self.spy_beat_weight if self.spy_beat_weight > 0 else 1.0
+            reward = scale * (log_net - float(np.log(max(1.0 + spy_ret, 1e-6))))
+            reward -= self.yield_weight * log_rf
+        else:
+            reward = log_net
+            if self.reward_excess:
+                reward -= self.yield_weight * log_rf
+            if self.spy_beat_weight:
+                # After-cost outperformance versus the index. The index return is
+                # the day's result, not something the agent saw before acting.
+                reward += self.spy_beat_weight * (net_ret - spy_ret)
         reward -= self.risk.drawdown_penalty * dd_increment
         if self.experience_scale:
             key = pd.Timestamp(self.close.index[t]).date()

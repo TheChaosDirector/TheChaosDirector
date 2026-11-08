@@ -122,7 +122,7 @@ def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | N
     train_env = Monitor(
         _make_portfolio_env(close, panel, cfg, bounds["train_start"], bounds["train_end"])
     )
-    policy_kwargs = dict(net_arch=[128, 128])
+    policy_kwargs = dict(net_arch=[128, 128] if cfg.compete.focus == "market" or cfg.compete.reward == "both" else [64, 64])
     model = _new_ppo(cfg, train_env, seed=cfg.training.seed + 10_000, policy_kwargs=policy_kwargs)
     model.learn(total_timesteps=int(cfg.training.total_timesteps))
 
@@ -149,7 +149,17 @@ def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | N
         "protocol": (
             "One model trained only on the window before the embargo. "
             "The sealed year was not used to train, to pick this model, or to decide to train again."
+            + (
+                " Reward is after-cost wealth versus SPY, with the bill at "
+                f"weight {cfg.compete.yield_weight:.2f}. This same calendar year was already "
+                "scored once under the earlier dual-hurdle reward, so this grade is a follow-up."
+                if cfg.compete.focus == "market"
+                else ""
+            )
         ),
+        "focus": cfg.compete.focus,
+        "yield_weight": cfg.compete.yield_weight,
+        "spy_beat_weight": cfg.compete.spy_beat_weight,
         "train_start": str(close.index[bounds["train_start"]].date()),
         "train_end": str(close.index[bounds["train_end"] - 1].date()),
         "holdout_start": str(close.index[bounds["holdout_start"]].date()),
@@ -192,7 +202,9 @@ def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | N
         "feature_names": panel.names,
         "selected_by": "most_recent_window_before_locked_holdout",
         "learner": "ppo",
-        "objective": "beat_spy_and_tbill",
+        "objective": "beat_spy" if cfg.compete.focus == "market" else "beat_spy_and_tbill",
+        "focus": cfg.compete.focus,
+        "yield_weight": cfg.compete.yield_weight,
         "hurdle_symbol": cfg.compete.symbol,
         "config_path": cfg.config_path,
         "holdout_candidate": True,

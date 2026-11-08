@@ -122,6 +122,17 @@ class CompeteCfg:
     # picked because of them, and saved paper decisions are not replayed.
     # One model is then fit on the years just before that seal and scored once.
     final_holdout_days: int = 0
+    # 1.0 subtracts the whole bill from the reward. Lower values keep the bill
+    # as a light penalty so the book is not paid mainly for hugging cash.
+    yield_weight: float = 1.0
+    # "bill" ranks exams by excess over the T-bill.
+    # "market" ranks them by after-cost excess over the benchmark, and the
+    # reward becomes log wealth minus the benchmark, minus yield_weight times
+    # the bill.
+    focus: str = "bill"
+    # Also show lagged 5-year and 10-year yields, and the 10y-minus-bill slope.
+    # These are inputs only. They do not raise the bill's weight in the reward.
+    observe_curve: bool = False
 
     def __post_init__(self) -> None:
         if self.reward not in ("excess", "absolute", "both"):
@@ -129,8 +140,12 @@ class CompeteCfg:
                 "compete.reward must be 'excess', 'absolute', or 'both', "
                 f"got {self.reward!r}"
             )
+        if self.focus not in ("bill", "market"):
+            raise ValueError("compete.focus must be 'bill' or 'market', " f"got {self.focus!r}")
         if self.final_holdout_days < 0:
             raise ValueError("compete.final_holdout_days cannot be negative")
+        if self.yield_weight < 0:
+            raise ValueError("compete.yield_weight cannot be negative")
 
 
 @dataclass

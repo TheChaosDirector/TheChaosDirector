@@ -120,6 +120,10 @@ Cash earns the bill. The reward is profit minus that hurdle. The exam score used
 
 That sealed year was scored once and did not win. From 2025-11-05 through 2026-11-05 the model made 2.4% after those costs. SPY made 9.7% and the 13-week bill made 3.8% on the same decision days. At 3x costs the model made -16.6%, with about 37% of the book traded each day. None of the nine earlier exam years beat both hurdles. The sealed year was not used to train again.
 
+`configs/yield-compete-market.yaml` turns the bill down. Its reward is after-cost wealth versus SPY, minus 0.20 times the bill. It trains from 1998 on a wider universe and can see lagged 5-year and 10-year yields. The same last year is only a follow-up grade, because that window was already opened, and this copy still does not replace the live champion.
+
+That follow-up, scored once, made **+11.9%** from 2025-11-05 through 2026-11-05 after 1 bp commission and 10 bp slippage. SPY made **+9.7%** and the bill made **+3.8%**. At 3x costs the model made **−2.5%**. It traded about 25% of the book each day. Removing its three best days versus SPY leaves the year behind the index (+11.5% versus +13.1%). Five of the twenty earlier exams finished ahead of SPY. The sealed year was not used to train again.
+
 ## Choice diary → future training data
 
 Every Alpaca rebalance (dry-run or execute) appends that day’s choice to:
