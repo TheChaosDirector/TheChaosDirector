@@ -37,20 +37,48 @@ def action_to_weights(
 ) -> np.ndarray:
     """Map raw agent output (logits over names + cash) to legal weights.
 
-    Softmax turns arbitrary numbers into a budget that sums to 1; the per-name
-    cap and gross-exposure cap are then enforced, with any excess parked in
-    cash. Names without a tradable price today are forced to zero.
+    Softmax turns arbitrary numbers into a budget that sums to 1. The last
+    slot is an explicit cash choice. Budget that landed on a name that cannot
+    be traded is spread across the names that can, in proportion to the budget
+    they already had. It is not left in cash: a missing listing is not a
+    decision to step aside. The per-name cap and the gross cap are applied
+    after that, and only the overflow from those caps sits in cash.
     """
     logits = np.clip(np.asarray(action, dtype=np.float64), -10.0, 10.0)
     exp = np.exp(logits - logits.max())
     budget = exp / exp.sum()
 
-    weights = budget[:-1] * valid_mask  # last slot is cash
-    weights = np.minimum(weights, max_weight)
-    gross = weights.sum()
-    if gross > max_gross and gross > 0:
-        weights *= max_gross / gross
-    return weights
+    valid = np.asarray(valid_mask, dtype=np.float64) > 0
+    stock_budget = budget[:-1]
+    wanted = float(stock_budget.sum())
+    stock = np.where(valid, stock_budget, 0.0)
+    live = float(stock.sum())
+    if live > 0.0 and wanted > 0.0:
+        stock *= wanted / live
+    else:
+        stock = np.zeros_like(stock_budget)
+    stock = np.minimum(stock, max_weight)
+    gross = float(stock.sum())
+    if gross > max_gross and gross > 0.0:
+        stock *= max_gross / gross
+    return stock
+
+
+def _align_eligible(eligible, index: pd.Index, tickers: list[str]) -> np.ndarray | None:
+    """Boolean array aligned to the price rows. None leaves the price check in charge."""
+    if eligible is None:
+        return None
+    if isinstance(eligible, pd.DataFrame):
+        frame = eligible.reindex(index=index, columns=tickers)
+        if frame.shape != (len(index), len(tickers)):
+            raise ValueError("eligible must have one row per price row and one column per name")
+        return frame.fillna(False).to_numpy(dtype=bool)
+    array = np.asarray(eligible, dtype=bool)
+    if array.shape != (len(index), len(tickers)):
+        raise ValueError(
+            f"eligible shape {array.shape} does not match prices {(len(index), len(tickers))}"
+        )
+    return array
 
 
 class PortfolioEnv(gym.Env):
@@ -81,6 +109,7 @@ class PortfolioEnv(gym.Env):
         rebalance_interval: int = 1,
         spy_anchor: float = 0.0,
         anchor_ticker: str | None = None,
+        eligible: pd.DataFrame | np.ndarray | None = None,
     ):
         super().__init__()
         assert list(close.columns) == panel.tickers
@@ -121,6 +150,7 @@ class PortfolioEnv(gym.Env):
             if anchor_ticker in list(panel.tickers)
             else None
         )
+        self.eligible = _align_eligible(eligible, close.index, list(panel.tickers))
 
         self.n_assets = len(panel.tickers)
         obs_dim = self.n_assets * panel.n_features + self.n_assets + 2
@@ -144,7 +174,10 @@ class PortfolioEnv(gym.Env):
     def _valid_mask(self, t: int) -> np.ndarray:
         today = self.prices[t]
         tomorrow = self.prices[t + 1]
-        return (np.isfinite(today) & np.isfinite(tomorrow)).astype(np.float64)
+        tradable = np.isfinite(today) & np.isfinite(tomorrow)
+        if self.eligible is not None:
+            tradable = tradable & self.eligible[t]
+        return tradable.astype(np.float64)
 
     def _rf(self, t: int) -> float:
         if self.cash_yield is None:

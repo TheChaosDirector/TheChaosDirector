@@ -71,7 +71,7 @@ def _year_rows(records: list[dict]) -> list[dict]:
     return rows
 
 
-def apply_repeated_edge_gate(cfg: Config, close: pd.DataFrame, panel, records: list[dict]) -> dict:
+def apply_repeated_edge_gate(cfg: Config, close: pd.DataFrame, panel, records: list[dict], volume=None) -> dict:
     """Decide from the stitched exams. Does not score the sealed year."""
     from src.train.holdout import describe_seal, holdout_bounds
 
@@ -154,7 +154,7 @@ def apply_repeated_edge_gate(cfg: Config, close: pd.DataFrame, panel, records: l
         "selected_by": "repeated_edge_gate_failed_hold_spy",
     }
     if kept:
-        champion.update(_train_presample_model(cfg, close, panel))
+        champion.update(_train_presample_model(cfg, close, panel, volume=volume))
     save_champion(cfg, champion)
     (registry_dir(cfg) / "champion_walkforward.json").write_text(
         json.dumps(champion, indent=2, default=str)
@@ -162,7 +162,7 @@ def apply_repeated_edge_gate(cfg: Config, close: pd.DataFrame, panel, records: l
     return champion
 
 
-def _train_presample_model(cfg: Config, close: pd.DataFrame, panel) -> dict:
+def _train_presample_model(cfg: Config, close: pd.DataFrame, panel, volume=None) -> dict:
     """Fit one model on the years before the seal. Do not grade the seal."""
     from stable_baselines3.common.monitor import Monitor
 
@@ -176,7 +176,7 @@ def _train_presample_model(cfg: Config, close: pd.DataFrame, panel) -> dict:
         close.index[bounds["train_end"] - 1].date(),
     )
     train_env = Monitor(
-        _make_portfolio_env(close, panel, cfg, bounds["train_start"], bounds["train_end"])
+        _make_portfolio_env(close, panel, cfg, bounds["train_start"], bounds["train_end"], volume=volume)
     )
     model = _new_ppo(
         cfg,

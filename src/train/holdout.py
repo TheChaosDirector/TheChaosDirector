@@ -97,7 +97,7 @@ def _block(journal: pd.DataFrame) -> dict:
     }
 
 
-def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | None:
+def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel, volume=None) -> dict | None:
     """Fit the pre-holdout model and score the sealed window exactly once."""
     if cfg.compete.final_holdout_days <= 0:
         return None
@@ -120,7 +120,7 @@ def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | N
     )
 
     train_env = Monitor(
-        _make_portfolio_env(close, panel, cfg, bounds["train_start"], bounds["train_end"])
+        _make_portfolio_env(close, panel, cfg, bounds["train_start"], bounds["train_end"], volume=volume)
     )
     policy_kwargs = dict(net_arch=[128, 128] if cfg.compete.focus == "market" or cfg.compete.reward == "both" else [64, 64])
     model = _new_ppo(cfg, train_env, seed=cfg.training.seed + 10_000, policy_kwargs=policy_kwargs)
@@ -131,7 +131,9 @@ def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | N
     model_path = out_dir / "model.zip"
     model.save(str(model_path))
 
-    exam = _make_portfolio_env(close, panel, cfg, bounds["holdout_start"], bounds["holdout_end"])
+    exam = _make_portfolio_env(
+        close, panel, cfg, bounds["holdout_start"], bounds["holdout_end"], volume=volume
+    )
     journal = rollout(model, exam)
     stressed_env = _make_portfolio_env(
         close,
@@ -140,6 +142,7 @@ def train_and_score_holdout(cfg: Config, close: pd.DataFrame, panel) -> dict | N
         bounds["holdout_start"],
         bounds["holdout_end"],
         cost_multiplier=cfg.costs.stress_multiplier,
+        volume=volume,
     )
     stressed = rollout(model, stressed_env)
 

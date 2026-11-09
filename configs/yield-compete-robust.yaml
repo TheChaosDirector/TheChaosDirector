@@ -22,6 +22,9 @@ paths:
 universe:
   name: default
   benchmark: SPY
+  # A name may be held only after this many closes already exist, and only if
+  # its trailing dollar volume through the prior close clears the floor below.
+  # The cap is applied that day, not by ranking the whole file at once.
   min_history_days: 756
   max_tickers: 120
 
