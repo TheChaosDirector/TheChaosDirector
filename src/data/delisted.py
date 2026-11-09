@@ -7,6 +7,10 @@ keeps those names through their last trade.
 
 Source: FINSABER (Apache-2.0), file
 ``all_sp500_prices_2000_2024_delisted_include.csv``.
+
+That file never traded Lehman, WorldCom, Bear Stearns before the weekend it
+was sold, or General Motors before the 2009 bankruptcy. Those four series are
+read from ``gap_names.csv`` and added for the years they actually traded.
 """
 
 from __future__ import annotations
@@ -26,6 +30,23 @@ PRICE_URL = (
 # Facebook traded as FB, and GOOG covers the same days as the GOOGL share class.
 # Holding both would count one company twice.
 DROP_WHEN_ALSO_PRESENT = {"FB": "META", "GOOGL": "GOOG"}
+
+# Daily traded close and share volume for the four names missing above.
+# Closes are the prices people paid. They are not adjusted for dividends.
+GAP_FILE = Path(__file__).with_name("gap_names.csv")
+
+# Old GM kept trading under MTLQQ after the ticker change, through the
+# bankruptcy. Those rows are the same company as GM. They are not the
+# company that started trading in November 2010.
+OLD_GM_TICKER = "MTLQQ"
+
+# Lehman split 2-for-1 on both of these mornings. The close falls by about
+# half and the next days stay there. Scaling the earlier prices takes the
+# split out and leaves the ordinary move from that day.
+KNOWN_SPLITS = {
+    ("LEH", "2000-10-23"): 2.0,
+    ("LEH", "2006-05-01"): 2.0,
+}
 
 
 def _repair_one_symbol(group: pd.DataFrame) -> pd.DataFrame:
@@ -157,6 +178,101 @@ def _blank_vendor_spikes(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def apply_known_splits(frame: pd.DataFrame) -> pd.DataFrame:
+    """Take the recorded stock splits out of a raw close series.
+
+    Earlier prices and share counts are scaled so a 2-for-1 is not a loss.
+    Dollars traded stay the same, because the price is divided by the same
+    factor the volume is multiplied by. The move left on the split morning
+    stays in the series.
+    """
+    frame = frame.sort_values(["symbol", "date"]).copy()
+    close = frame["close"].to_numpy(dtype=np.float64, copy=True)
+    volume = frame["volume"].to_numpy(dtype=np.float64, copy=True)
+    symbols = frame["symbol"].astype(str).to_numpy()
+    dates = pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").to_numpy()
+    for (symbol, day), factor in KNOWN_SPLITS.items():
+        hits = np.flatnonzero((symbols == symbol) & (dates == day))
+        if len(hits) != 1:
+            continue
+        i = int(hits[0])
+        if i == 0 or not (close[i - 1] > 0 and close[i] > 0):
+            continue
+        # Refuse a date that is not actually a split in this file.
+        if abs((close[i - 1] / close[i]) / factor - 1.0) > 0.15:
+            continue
+        earlier = (symbols == symbol) & (np.arange(len(frame)) < i)
+        close[earlier] = close[earlier] / factor
+        volume[earlier] = volume[earlier] * factor
+    frame["close"] = close
+    frame["volume"] = volume
+    return frame
+
+
+def _keep_flat_closes(frame: pd.DataFrame) -> pd.DataFrame:
+    """Keep a close that repeats the prior close when no share count was recorded.
+
+    WorldCom printed $0.83 for three sessions with a zero share count, then
+    $0.06 on a session with more than a billion shares. Dropping the $0.83
+    days would skip that loss. The prior session's share count keeps the
+    close. A day the price actually changed is not filled in.
+    """
+    frame = frame.sort_values(["symbol", "date"]).copy()
+    volume = frame["volume"].to_numpy(dtype=np.float64, copy=True)
+    close = frame["close"].to_numpy(dtype=np.float64)
+    symbols = frame["symbol"].astype(str).to_numpy()
+    for i in range(1, len(frame)):
+        if symbols[i] != symbols[i - 1] or volume[i] > 0 or not close[i] > 0:
+            continue
+        if close[i] == close[i - 1] and volume[i - 1] > 0:
+            volume[i] = volume[i - 1]
+    frame["volume"] = volume
+    return frame
+
+
+def load_gap_names(path: Path | None = None) -> pd.DataFrame:
+    """The four missing names, with the known splits taken out.
+
+    Columns are date, symbol, close, volume. ``close`` is the traded close
+    after the split scale. It is not a dividend-adjusted total return.
+    """
+    path = GAP_FILE if path is None else Path(path)
+    frame = pd.read_csv(path)
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["close"] = frame["close"].astype(float)
+    frame["volume"] = frame["volume"].astype(float)
+    frame = frame.dropna(subset=["date", "symbol", "close", "volume"])
+    frame = _keep_flat_closes(frame)
+    frame = frame[(frame["close"] > 0) & (frame["volume"] > 0)]
+    return apply_known_splits(frame)
+
+
+def _append_gap_names(frame: pd.DataFrame, gaps: pd.DataFrame) -> pd.DataFrame:
+    """Add gap rows on dates the main file does not already cover.
+
+    Old GM's later ticker is renamed to GM, and any of its rows on or after
+    the new company's first day are left out. A gap of missing days stays
+    between the two, so the replay does not earn a return from the penny
+    stock into the new listing.
+    """
+    extra = gaps.copy()
+    extra.loc[extra["symbol"] == OLD_GM_TICKER, "symbol"] = "GM"
+    pieces: list[pd.DataFrame] = []
+    for symbol, group in extra.groupby("symbol", sort=False):
+        existing = frame.loc[frame["symbol"] == symbol, "date"]
+        if len(existing):
+            group = group[group["date"] < existing.min()]
+        if group.empty:
+            continue
+        pieces.append(group)
+    if not pieces:
+        return frame
+    add = pd.concat(pieces, ignore_index=True)
+    add["adjusted_close"] = add["close"]
+    add = add[["date", "symbol", "close", "adjusted_close", "volume"]]
+    return pd.concat([frame, add], ignore_index=True)
+
+
 def ensure_price_file(dest: Path) -> Path:
     """Download the delisted-inclusive price file if it is not already here."""
     dest = Path(dest)
@@ -167,7 +283,12 @@ def ensure_price_file(dest: Path) -> Path:
     return dest
 
 
-def load_price_frames(path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_price_frames(
+    path: Path,
+    *,
+    include_gaps: bool = True,
+    gap_file: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return adjusted close, volume, and raw dollar volume.
 
     Adjusted close is the return series, so splits and dividends stay in the
@@ -175,6 +296,11 @@ def load_price_frames(path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
     adjusted close times volume. Raw close times that volume would count one
     trade again for every later split. A non-positive price is treated as
     "no longer trading."
+
+    Lehman, WorldCom, Bear Stearns before the sale, and old General Motors are
+    read from ``gap_names.csv`` and added on the days this file does not
+    already have them. Their closes are the prices people paid. Cash dividends
+    on those four are not in the series.
     """
     frame = pd.read_csv(
         path,
@@ -189,6 +315,8 @@ def load_price_frames(path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFr
     ]
     if drop:
         frame = frame[~frame["symbol"].isin(drop)]
+    if include_gaps:
+        frame = _append_gap_names(frame, load_gap_names(gap_file))
     # A non-positive price, or a row with no shares traded, is not a price
     # the book can use. Several dead tickers print a normal price on a day
     # when the recorded volume is zero.

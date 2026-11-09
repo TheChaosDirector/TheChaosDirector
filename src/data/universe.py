@@ -8,7 +8,8 @@ mean the name was tradable in an earlier year. Who may actually be held on a
 given day is decided from trailing volume through the prior close.
 
 The long even-split replay does not use this list. It uses the price file in
-``src/data/delisted.py``, which keeps companies through their last trade.
+``src/data/delisted.py``, which keeps companies through their last trade,
+including Lehman, WorldCom, Bear Stearns, and old General Motors.
 """
 
 from __future__ import annotations
