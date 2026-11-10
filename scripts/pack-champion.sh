@@ -22,6 +22,11 @@ case "$MODEL_PATH" in
     echo "That copy lives under artifacts/yield-compete and is not the daily paper model."
     exit 1
     ;;
+  *delisted-ranker*)
+    echo "Refusing to pack the delisted ranker as the live portfolio-champion release."
+    echo "That copy lives under artifacts/delisted-ranker and is not the daily paper model."
+    exit 1
+    ;;
 esac
 if [[ ! -f "$MODEL_PATH" ]]; then
   # Prefer mode-scoped copy when legacy path is missing.

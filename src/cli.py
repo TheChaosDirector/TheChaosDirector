@@ -143,6 +143,10 @@ def main() -> None:
             from src.train.daytrade_supervised import run_supervised_training
 
             champion = run_supervised_training(cfg)
+        elif cfg.mode == "portfolio" and cfg.training.learner == "ranker":
+            from src.train.portfolio_ranker import run_ranker_training
+
+            champion = run_ranker_training(cfg)
         else:
             from src.train.walkforward import run_training
 
