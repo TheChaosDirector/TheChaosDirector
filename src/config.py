@@ -27,6 +27,9 @@ class DataCfg:
     start: str = "2010-01-01"
     end: str | None = None
     min_dollar_volume: float = 5_000_000
+    # Delisted price file for the portfolio ranker.
+    # Empty means data/external/sp500_delisted_prices.csv.
+    price_file: str = ""
 
 
 @dataclass
@@ -36,6 +39,9 @@ class FeaturesCfg:
     volume_window: int = 21
     ma_windows: list[int] = field(default_factory=lambda: [10, 50, 200])
     regime_ma: int = 200
+    # Inflation, unemployment, and the bill minus inflation. Off by default so
+    # an existing model keeps the feature count it was trained with.
+    include_macro: bool = False
 
 
 @dataclass
@@ -66,6 +72,9 @@ class TrainingCfg:
     n_env_steps: int = 2048
     learning_rate: float = 3e-4
     n_workers: int = 1  # parallel walk-forward folds (1 = serial)
+    # "ppo" is the reinforcement learner. "ranker" is a separate walk-forward
+    # gradient-boosted model and does not replace a saved PPO.
+    learner: str = "ppo"
 
 
 @dataclass
@@ -196,6 +205,13 @@ class Config:
     def __post_init__(self) -> None:
         if self.mode not in VALID_MODES:
             raise ValueError(f"Unknown mode '{self.mode}' (expected {VALID_MODES})")
+        if self.training.learner not in ("ppo", "ranker"):
+            raise ValueError(
+                "training.learner must be 'ppo' or 'ranker', "
+                f"got {self.training.learner!r}"
+            )
+        if self.training.learner == "ranker" and self.mode != "portfolio":
+            raise ValueError("training.learner 'ranker' is only for portfolio mode")
 
     @property
     def lake_dir(self) -> Path:

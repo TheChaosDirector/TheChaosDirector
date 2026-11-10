@@ -42,6 +42,10 @@ def load_champion_model(cfg: Config):
     meta = load_champion_meta(cfg)
     path = meta["model_path"]
     learner = meta.get("learner", "")
+    if learner == "ranker":
+        from src.train.portfolio_ranker import PortfolioRankerAdapter
+
+        return PortfolioRankerAdapter.load(path), meta
     if "ensemble" in learner or str(path).endswith("ensemble.joblib"):
         from src.train.daytrade_supervised import DaytradeEnsembleAdapter
 

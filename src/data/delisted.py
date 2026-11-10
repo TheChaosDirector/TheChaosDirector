@@ -11,6 +11,9 @@ Source: FINSABER (Apache-2.0), file
 That file never traded Lehman, WorldCom, Bear Stearns before the weekend it
 was sold, or General Motors before the 2009 bankruptcy. Those four series are
 read from ``gap_names.csv`` and added for the years they actually traded.
+Lehman, Bear Stearns, and old General Motors also get the cash dividends
+listed in ``gap_dividends.csv``. WorldCom's common stock does not: the $0.60
+figure in its 2002 filing was a cancelled MCI tracking-stock dividend.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from src.data.gap_dividends import DIVIDEND_FILE
 
 PRICE_URL = (
     "https://huggingface.co/datasets/finsaber-team/FINSABER-reproduce/"
@@ -32,7 +37,8 @@ PRICE_URL = (
 DROP_WHEN_ALSO_PRESENT = {"FB": "META", "GOOGL": "GOOG"}
 
 # Daily traded close and share volume for the four names missing above.
-# Closes are the prices people paid. They are not adjusted for dividends.
+# Closes are the prices people paid. Cash dividends are a separate file and
+# are applied as a total-return series. Dollar volume stays on the traded close.
 GAP_FILE = Path(__file__).with_name("gap_names.csv")
 
 # Old GM kept trading under MTLQQ after the ticker change, through the
@@ -178,17 +184,42 @@ def _blank_vendor_spikes(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def total_return_close(close: np.ndarray, cash: np.ndarray) -> np.ndarray:
+    """Backward dividend adjustment. The last traded close stays put.
+
+    Walking backward, a dividend lowers every earlier price by
+    ``close / (close + cash)``. The return into the payable date is then
+    ``(close + cash) / previous close - 1``. A day with no cash is unchanged.
+    """
+    adjusted = np.array(close, dtype=np.float64, copy=True)
+    paid = np.asarray(cash, dtype=np.float64)
+    factor = 1.0
+    for i in range(len(close) - 1, -1, -1):
+        price = close[i]
+        if not np.isfinite(price) or price <= 0:
+            adjusted[i] = np.nan
+            continue
+        adjusted[i] = price * factor
+        dividend = paid[i] if i < len(paid) and np.isfinite(paid[i]) else 0.0
+        if dividend > 0:
+            factor *= price / (price + dividend)
+    return adjusted
+
+
 def apply_known_splits(frame: pd.DataFrame) -> pd.DataFrame:
     """Take the recorded stock splits out of a raw close series.
 
-    Earlier prices and share counts are scaled so a 2-for-1 is not a loss.
-    Dollars traded stay the same, because the price is divided by the same
-    factor the volume is multiplied by. The move left on the split morning
-    stays in the series.
+    Earlier prices, share counts, and cash dividends are scaled so a 2-for-1
+    is not a loss. Dollars traded stay the same, because the price is divided
+    by the same factor the volume is multiplied by. The move left on the split
+    morning stays in the series. Dividend cash is divided by the same factor,
+    so the yield is unchanged.
     """
     frame = frame.sort_values(["symbol", "date"]).copy()
     close = frame["close"].to_numpy(dtype=np.float64, copy=True)
     volume = frame["volume"].to_numpy(dtype=np.float64, copy=True)
+    has_cash = "cash" in frame.columns
+    cash = frame["cash"].to_numpy(dtype=np.float64, copy=True) if has_cash else None
     symbols = frame["symbol"].astype(str).to_numpy()
     dates = pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").to_numpy()
     for (symbol, day), factor in KNOWN_SPLITS.items():
@@ -204,8 +235,12 @@ def apply_known_splits(frame: pd.DataFrame) -> pd.DataFrame:
         earlier = (symbols == symbol) & (np.arange(len(frame)) < i)
         close[earlier] = close[earlier] / factor
         volume[earlier] = volume[earlier] * factor
+        if cash is not None:
+            cash[earlier] = cash[earlier] / factor
     frame["close"] = close
     frame["volume"] = volume
+    if cash is not None:
+        frame["cash"] = cash
     return frame
 
 
@@ -230,11 +265,78 @@ def _keep_flat_closes(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def load_gap_names(path: Path | None = None) -> pd.DataFrame:
-    """The four missing names, with the known splits taken out.
+def _snap_payment(pay: pd.Timestamp, traded: pd.DatetimeIndex) -> pd.Timestamp | None:
+    """Move a payable date onto a session the name actually traded.
 
-    Columns are date, symbol, close, volume. ``close`` is the traded close
-    after the split scale. It is not a dividend-adjusted total return.
+    The payable date is kept when it is already a session. A market holiday
+    uses the next session, up to five calendar days later, and otherwise the
+    previous session inside that same window.
+    """
+    traded = pd.DatetimeIndex(traded).sort_values()
+    if pay in traded:
+        return pay
+    later = traded[traded > pay]
+    if len(later) and (later[0] - pay).days <= 5:
+        return later[0]
+    earlier = traded[traded < pay]
+    if len(earlier) and (pay - earlier[-1]).days <= 5:
+        return earlier[-1]
+    return None
+
+
+def _attach_dividends(frame: pd.DataFrame, dividend_file: Path | None) -> pd.DataFrame:
+    """Add a cash column. Payments land on a session the name traded."""
+    frame = frame.copy()
+    frame["cash"] = 0.0
+    path = DIVIDEND_FILE if dividend_file is None else Path(dividend_file)
+    if not path.exists():
+        return frame
+    dividends = pd.read_csv(path)
+    if dividends.empty:
+        return frame
+    dividends["date"] = pd.to_datetime(dividends["date"])
+    dividends["cash"] = dividends["cash"].astype(float)
+    snapped: list[dict] = []
+    for symbol, group in frame.groupby("symbol", sort=False):
+        payments = dividends[dividends["symbol"] == symbol]
+        if payments.empty:
+            continue
+        traded = pd.DatetimeIndex(group["date"])
+        for pay, cash in zip(payments["date"], payments["cash"]):
+            if not cash > 0:
+                continue
+            day = _snap_payment(pd.Timestamp(pay), traded)
+            if day is None:
+                continue
+            snapped.append({"date": day, "symbol": symbol, "paid": float(cash)})
+    if not snapped:
+        return frame
+    paid = pd.DataFrame(snapped).groupby(["date", "symbol"], as_index=False)["paid"].sum()
+    frame = frame.merge(paid, on=["date", "symbol"], how="left")
+    frame["cash"] = frame["paid"].fillna(0.0)
+    return frame.drop(columns=["paid"])
+
+
+def _with_total_return(frame: pd.DataFrame) -> pd.DataFrame:
+    parts: list[pd.DataFrame] = []
+    for _, group in frame.groupby("symbol", sort=False):
+        group = group.sort_values("date").copy()
+        cash = group["cash"].to_numpy(dtype=np.float64) if "cash" in group.columns else np.zeros(len(group))
+        group["adjusted_close"] = total_return_close(group["close"].to_numpy(dtype=np.float64), cash)
+        parts.append(group)
+    return pd.concat(parts, ignore_index=True)
+
+
+def load_gap_names(
+    path: Path | None = None,
+    dividend_file: Path | None = None,
+) -> pd.DataFrame:
+    """The four missing names, with splits taken out and cash dividends applied.
+
+    ``close`` is the traded close after the split scale. ``adjusted_close`` is
+    the total-return series: the last traded close is unchanged, and earlier
+    levels are a little lower so a payable date earns the cash. ``cash`` is
+    the dividend in those same split-adjusted share units.
     """
     path = GAP_FILE if path is None else Path(path)
     frame = pd.read_csv(path)
@@ -244,7 +346,9 @@ def load_gap_names(path: Path | None = None) -> pd.DataFrame:
     frame = frame.dropna(subset=["date", "symbol", "close", "volume"])
     frame = _keep_flat_closes(frame)
     frame = frame[(frame["close"] > 0) & (frame["volume"] > 0)]
-    return apply_known_splits(frame)
+    frame = _attach_dividends(frame, dividend_file)
+    frame = apply_known_splits(frame)
+    return _with_total_return(frame)
 
 
 def _append_gap_names(frame: pd.DataFrame, gaps: pd.DataFrame) -> pd.DataFrame:
@@ -268,8 +372,12 @@ def _append_gap_names(frame: pd.DataFrame, gaps: pd.DataFrame) -> pd.DataFrame:
     if not pieces:
         return frame
     add = pd.concat(pieces, ignore_index=True)
-    add["adjusted_close"] = add["close"]
-    add = add[["date", "symbol", "close", "adjusted_close", "volume"]]
+    if "adjusted_close" not in add.columns:
+        add["adjusted_close"] = add["close"]
+    # Dollar volume uses the traded close. The total-return level is lower
+    # in the past, and using it would understate how much stock changed hands.
+    add["dollar_price"] = add["close"]
+    add = add[["date", "symbol", "close", "adjusted_close", "volume", "dollar_price"]]
     return pd.concat([frame, add], ignore_index=True)
 
 
@@ -288,19 +396,21 @@ def load_price_frames(
     *,
     include_gaps: bool = True,
     gap_file: Path | None = None,
+    dividend_file: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return adjusted close, volume, and raw dollar volume.
+    """Return adjusted close, volume, and dollar volume.
 
     Adjusted close is the return series, so splits and dividends stay in the
-    result. Volume in this file is already split-adjusted, so dollar volume is
-    adjusted close times volume. Raw close times that volume would count one
-    trade again for every later split. A non-positive price is treated as
-    "no longer trading."
+    result. Volume in the main file is already split-adjusted, so dollar
+    volume there is adjusted close times volume. Raw close times that volume
+    would count one trade again for every later split. A non-positive price
+    is treated as "no longer trading."
 
     Lehman, WorldCom, Bear Stearns before the sale, and old General Motors are
     read from ``gap_names.csv`` and added on the days this file does not
-    already have them. Their closes are the prices people paid. Cash dividends
-    on those four are not in the series.
+    already have them. Their return series includes the cash dividends in
+    ``gap_dividends.csv``. Dollar volume for those rows uses the traded close,
+    not the dividend-adjusted level.
     """
     frame = pd.read_csv(
         path,
@@ -316,7 +426,7 @@ def load_price_frames(
     if drop:
         frame = frame[~frame["symbol"].isin(drop)]
     if include_gaps:
-        frame = _append_gap_names(frame, load_gap_names(gap_file))
+        frame = _append_gap_names(frame, load_gap_names(gap_file, dividend_file=dividend_file))
     # A non-positive price, or a row with no shares traded, is not a price
     # the book can use. Several dead tickers print a normal price on a day
     # when the recorded volume is zero.
@@ -328,7 +438,12 @@ def load_price_frames(
     frame.loc[dead, ["close", "adjusted_close", "volume"]] = np.nan
     frame = _repair_scale_breaks(frame)
     frame = _blank_vendor_spikes(frame)
-    frame["dollar"] = frame["adjusted_close"] * frame["volume"]
+    if "dollar_price" in frame.columns:
+        frame.loc[frame["adjusted_close"].isna(), "dollar_price"] = np.nan
+        basis = frame["dollar_price"].where(frame["dollar_price"].notna(), frame["adjusted_close"])
+    else:
+        basis = frame["adjusted_close"]
+    frame["dollar"] = basis * frame["volume"]
 
     def _wide(column: str) -> pd.DataFrame:
         wide = frame.pivot(index="date", columns="symbol", values=column)
