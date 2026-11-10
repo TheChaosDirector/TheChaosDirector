@@ -48,18 +48,32 @@ def _zscore(df: pd.DataFrame, window: int) -> pd.DataFrame:
     return (df - mean) / std.replace(0.0, np.nan)
 
 
+def _broadcast(series: pd.Series, close: pd.DataFrame) -> pd.DataFrame:
+    aligned = pd.Series(series, copy=False).reindex(close.index).astype(float)
+    return pd.DataFrame(
+        np.tile(aligned.to_numpy()[:, None], (1, close.shape[1])),
+        index=close.index,
+        columns=close.columns,
+    )
+
+
 def build_features(
     close: pd.DataFrame,
     volume: pd.DataFrame,
     fcfg: FeaturesCfg,
     benchmark: str,
     extra_unlagged: dict[str, pd.DataFrame] | None = None,
+    extra_lagged: dict[str, pd.Series] | None = None,
 ) -> FeaturePanel:
     """Build the leakage-safe feature panel.
 
     ``extra_unlagged`` exists only for the referee's own tests: it lets a test
     plant a deliberately cheating feature (NOT shifted) and prove it gets
     caught. Normal pipelines never pass it.
+
+    ``extra_lagged`` is for series that are already safe to show on day T,
+    such as a macro release aligned so day T only sees releases from before
+    that date. Those columns are not shifted again.
     """
     rets = close.pct_change()
     feats: dict[str, pd.DataFrame] = {}
@@ -98,6 +112,10 @@ def build_features(
     # THE anti-cheat step: shift everything so day T sees only data
     # through day T-1.
     feats = {k: v.shift(1) for k, v in feats.items()}
+
+    if extra_lagged:
+        for name, series in extra_lagged.items():
+            feats[name] = _broadcast(series, close)
 
     if extra_unlagged:
         feats.update(extra_unlagged)
